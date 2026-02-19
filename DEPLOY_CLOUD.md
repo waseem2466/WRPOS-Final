@@ -50,3 +50,17 @@ If you use the WhatsApp Cloud API:
 
 ---
 Your bot is now a truly global, always-on assistant!
+
+## 7. Alternative Platforms (Free)
+
+If Render doesn't suit you, here are two great alternatives:
+
+### [Koyeb](https://www.koyeb.com/) (Recommended)
+- **Free Tier**: Offers a "Nano" instance that runs 24/7 for free.
+- **Setup**: Create a "Web Service", connect GitHub, and use `npm install` and `node bot-server.js`.
+- **Pro**: No "sleeping" (spin down) on their free tier!
+
+### [Railway](https://railway.app/)
+- **Free Tier**: Offers $5 or 500 hours of free credits every month.
+- **Setup**: "New Project" > "Deploy from GitHub". It builds automatically.
+- **Pro**: Very fast deployment and excellent dashboard.
