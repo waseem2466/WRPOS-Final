@@ -1,0 +1,10 @@
+WR POS HEALTH CHECK REPORT
+==========================
+
+--- 1. Database Check ---
+✅ Database Connected: Mon Feb 16 2026 12:42:10 GMT+0530 (India Standard Time)
+📚 Tables found: monthly_summaries, users, products, AppUser, Settings, Supplier, User, Customer, Bill, purchase_orders, loans, expenses, returns, settings, bill_items, payments, bills, supplier_payments, suppliers, BillItem, ReturnRecord, Expense, customers, Product, MonthlySummary, PurchaseOrder, Payment, SupplierPayment, WhatsAppMessage
+
+--- 2. AI Config Check ---
+Gemini Key: Present
+DeepSeek Key: Present

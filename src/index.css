@@ -1,0 +1,16 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Custom base styles */
+body {
+  @apply font-sans antialiased;
+  background-color: #f3f4f6; /* bg-gray-100 */
+}
+
+/* Custom component styles */
+.shadow-sm {
+  box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+}
+
+/* Add any other global styles here */

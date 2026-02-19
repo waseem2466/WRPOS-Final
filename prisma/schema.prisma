@@ -1,0 +1,20 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["driverAdapters"]
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model AppUser {
+  id        String   @id
+  name      String?
+  email     String?  @unique
+  password  String?
+  role      String?
+  banned    Boolean? @default(false)
+  banReason String?
+  created_at DateTime? @default(now())
+  updated_at DateTime? @default(now())
+}

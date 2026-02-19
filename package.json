@@ -1,0 +1,124 @@
+{
+  "name": "wr-pos",
+  "private": true,
+  "version": "4.3.8",
+  "description": "WR POS - Cloud-based Billing & Management",
+  "author": "WR POS Enterprise",
+  "main": "electron-main.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "start-pos": "cross-env NODE_ENV=production .\\node_modules\\electron\\dist\\electron.exe .",
+    "start-all": "concurrently \"npm run dev\" \"wait-on http://localhost:5173 && npm run start-pos\"",
+    "electron:dev": "concurrently \"npm run dev\" \"wait-on http://localhost:5173 && cross-env NODE_ENV=development .\\node_modules\\electron\\dist\\electron.exe .\"",
+    "wa-dev": "concurrently \"npm run dev\" \"npx lt --port 3000 --subdomain wr-smile-pos\" \"wait-on http://localhost:5173 && cross-env NODE_ENV=development .\\node_modules\\electron\\dist\\electron.exe .\"",
+    "wa-permanent": "concurrently \"npm run dev\" \"npx lt --port 3000 --subdomain wr-smile-pos\" \"wait-on http://localhost:5173 && cross-env NODE_ENV=development .\\node_modules\\electron\\dist\\electron.exe .\"",
+    "dist": "vite build && electron-builder --win",
+    "dist:win": "vite build && electron-builder --win",
+    "dist:mac": "vite build && electron-builder --mac",
+    "dist:linux": "vite build && electron-builder --linux",
+    "dist:all": "vite build && electron-builder --win --mac --linux",
+    "postinstall": "prisma generate"
+  },
+  "build": {
+    "appId": "com.wrpos.terminal",
+    "productName": "WR POS",
+    "copyright": "Copyright © 2024 WR POS",
+    "directories": {
+      "output": "release"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "wrpos-enterprise",
+        "repo": "wr-pos"
+      }
+    ],
+    "files": [
+      "dist/**/*",
+      "electron-main.js",
+      "preload.cjs",
+      "shopData.js",
+      "aiReply.js",
+      "dbHelper.js",
+      "intent.js",
+      "invoice.js",
+      ".env",
+      "node_modules/**/*"
+    ],
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "icon": "public/favicon.ico",
+      "requestedExecutionLevel": "asInvoker"
+    },
+    "nsis": {
+      "oneClick": true,
+      "allowToChangeInstallationDirectory": false,
+      "shortcutName": "WR POS",
+      "deleteAppDataOnUninstall": false,
+      "createDesktopShortcut": "always"
+    },
+    "asar": true
+  },
+  "dependencies": {
+    "@google/generative-ai": "^0.21.0",
+    "@neondatabase/serverless": "^0.9.0",
+    "@prisma/adapter-neon": "^5.10.2",
+    "@prisma/client": "^7.2.0",
+    "@whiskeysockets/baileys": "^6.7.21",
+    "bcryptjs": "^2.4.3",
+    "buffer": "^6.0.3",
+    "cross-env": "^7.0.3",
+    "crypto-js": "^4.2.0",
+    "dotenv": "^17.2.4",
+    "electron-updater": "^6.1.7",
+    "express": "^5.2.1",
+    "firebase": "^10.8.0",
+    "jsonwebtoken": "^9.0.2",
+    "jspdf": "^2.5.1",
+    "jspdf-autotable": "^3.8.2",
+    "localtunnel": "^2.0.2",
+    "lucide-react": "^0.344.0",
+    "node-fetch": "^2.7.0",
+    "openai": "^4.104.0",
+    "pg": "^8.11.3",
+    "pino": "^9.0.0",
+    "pino-pretty": "^11.0.0",
+    "qrcode": "^1.5.3",
+    "qrcode-terminal": "^0.12.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "recharts": "^2.12.0",
+    "ws": "^8.16.0"
+  },
+  "devDependencies": {
+    "@prisma/config": "^7.2.0",
+    "@types/bcryptjs": "^2.4.6",
+    "@types/cors": "^2.8.19",
+    "@types/crypto-js": "^4.2.2",
+    "@types/express": "^5.0.6",
+    "@types/jsonwebtoken": "^9.0.6",
+    "@types/pg": "^8.11.2",
+    "@types/ws": "^8.5.10",
+    "@vitejs/plugin-react": "^4.2.1",
+    "autoprefixer": "^10.4.24",
+    "concurrently": "^9.2.1",
+    "cors": "^2.8.6",
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8",
+    "postcss": "^8.5.6",
+    "prisma": "^7.2.0",
+    "tailwindcss": "^3.4.17",
+    "terser": "^5.46.0",
+    "typescript": "^5.4.2",
+    "vite": "^5.1.5",
+    "wait-on": "^9.0.3"
+  },
+  "keywords": [],
+  "license": "ISC",
+  "type": "commonjs"
+}

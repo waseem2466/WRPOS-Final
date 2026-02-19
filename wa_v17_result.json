@@ -1,0 +1,17 @@
+{
+  "status": 200,
+  "body": {
+    "messaging_product": "whatsapp",
+    "contacts": [
+      {
+        "input": "94779336848",
+        "wa_id": "94779336848"
+      }
+    ],
+    "messages": [
+      {
+        "id": "wamid.HBgLOTQ3NzkzMzY4NDgVAgARGBJBQjYxMDY2QUMzMzFFRkZBRjQA"
+      }
+    ]
+  }
+}
