@@ -64,3 +64,13 @@ If Render doesn't suit you, here are two great alternatives:
 - **Free Tier**: Offers $5 or 500 hours of free credits every month.
 - **Setup**: "New Project" > "Deploy from GitHub". It builds automatically.
 - **Pro**: Very fast deployment and excellent dashboard.
+
+### [Hugging Face Spaces](https://huggingface.co/spaces) (Highly Recommended)
+- **Free Tier**: You can run a "Docker" space or a "Node.js" space for **free 24/7**.
+- **Setup**: Create a new Space > Select "Docker" or direct Node template > Link GitHub.
+- **Pro**: Extremely generous and rarely "sleeps" if configured as a permanent space.
+
+### [Oracle Cloud](https://www.oracle.com/cloud/free/) (Expert Choice)
+- **Free Tier**: "Always Free" ARM Ampere A1 Compute instances (4 vCPUs, 24GB RAM).
+- **Pro**: This is a full VPS (Virtual Private Server). It is the most powerful free option available.
+- **Con**: Requires a credit card for identity verification (they won't charge you) and setup is more technical (Linux commands).
