@@ -1,11 +1,12 @@
 import { pool } from './db';
 import { errorHandler } from './errorHandler';
-import { auth as firebaseAuth } from './firebase';
+import { auth as firebaseAuth, isFirebaseConfigured } from './firebase';
 import { signInWithEmailAndPassword, signOut, onAuthStateChanged, User as FirebaseUser, GoogleAuthProvider, signInWithPopup } from "firebase/auth";
 
 
 
 const isElectron = typeof window !== 'undefined' && (window as any).electronAPI;
+const isCapacitor = typeof window !== 'undefined' && !!(window as any).Capacitor?.isNativePlatform?.();
 
 export const authClient = {
   // Legacy session getter (kept for backward compat if needed, but Context handles main flow)
@@ -93,13 +94,48 @@ export const authClient = {
         throw new Error('Invalid credentials');
       }
     } catch (err: unknown) {
+      // Mobile / Capacitor Fallback: Try REST if pool fails
+      if (isCapacitor) {
+        try {
+          console.log('[Auth] Pool failed on mobile, attempting REST login...');
+          // Define a minimal mapper for REST result
+          const restRes = await (pool as any).query(`SELECT * FROM "AppUser" WHERE email = $1 LIMIT 1`, [email.toLowerCase().trim()]);
+          const restUser = restRes.rows[0];
+
+          if (restUser) {
+            const bcrypt = await import(/* @vite-ignore */ 'bcryptjs');
+            const valid = await bcrypt.compare(password, restUser.password);
+            if (valid) {
+              return {
+                user: { id: restUser.id, name: restUser.name, email: restUser.email, role: restUser.role },
+                token: 'rest-session-' + Date.now()
+              };
+            }
+            throw new Error('Invalid credentials');
+          }
+        } catch (restErr: any) {
+          console.error('[Auth] REST Fallback failed:', restErr);
+        }
+      }
+
       const error = err instanceof Error ? err : new Error(String(err));
       errorHandler.log('Auth', error, { operation: 'authenticate', email }, 'high');
-      // Determine if it's a network/connection error
-      if (error.message && (error.message.includes('connection') || error.message.includes('network') || error.message.includes('failed'))) {
+      // Broadened to catch all connection / pool errors
+      const msg = String(error?.message || '').toLowerCase();
+      if (
+        msg.includes('connection') ||
+        msg.includes('network') ||
+        msg.includes('failed') ||
+        msg.includes('timeout') ||
+        msg.includes('unreachable') ||
+        msg.includes('enotfound') ||
+        msg.includes('econnrefused') ||
+        msg.includes('fetch') ||
+        msg.includes('ssl') ||
+        msg.includes('timed out')
+      ) {
         throw new Error('Cloud Unreachable. Please check internet connection.');
       }
-      throw error;
       throw error;
     }
   },
@@ -107,6 +143,9 @@ export const authClient = {
   // Firebase-specific methods
   authenticateWithFirebase: async (email: string, password: string) => {
     try {
+      if (!isFirebaseConfigured || !firebaseAuth) {
+        throw new Error('Cloud sign-in is not configured on this device. Use Local mode for the desktop app.');
+      }
       const userCredential = await signInWithEmailAndPassword(firebaseAuth, email, password);
       const user = userCredential.user;
 
@@ -122,12 +161,30 @@ export const authClient = {
       };
     } catch (err: any) {
       errorHandler.log('Auth-Firebase', err, { operation: 'authenticateWithFirebase', email }, 'high');
+      const code = err?.code || '';
+      const fallbackHint = 'Use Local mode if this account exists only in your desktop database.';
+
+      if (code === 'auth/invalid-credential' || code === 'auth/wrong-password' || code === 'auth/user-not-found') {
+        throw new Error(`Cloud sign-in failed. The email/password is not valid for this Firebase project. ${fallbackHint}`);
+      }
+
+      if (code === 'auth/invalid-api-key' || code === 'auth/app-deleted') {
+        throw new Error('Cloud sign-in is misconfigured. Check your Firebase API key and project settings.');
+      }
+
+      if (code === 'auth/network-request-failed') {
+        throw new Error(`Cloud sign-in could not reach Firebase. ${fallbackHint}`);
+      }
+
       throw new Error(err.message || 'Firebase Auth failed');
     }
   },
 
   signInWithGoogle: async () => {
     try {
+      if (!isFirebaseConfigured || !firebaseAuth) {
+        throw new Error('Google Sign-In is not configured on this device.');
+      }
       const provider = new GoogleAuthProvider();
       // Add custom parameters if needed
       provider.setCustomParameters({
@@ -147,15 +204,26 @@ export const authClient = {
         token: await user.getIdToken()
       };
     } catch (err: any) {
-      errorHandler.log('Auth-Google', err, { operation: 'signInWithGoogle' }, 'high');
-      throw new Error(err.message || 'Google Sign-In failed');
+      // Provide helpful error message for common Firebase auth issues
+      let friendlyError = err.message || 'Google Sign-In failed';
+      
+      if (err.code === 'auth/unauthorized-domain') {
+        friendlyError = 'Google Sign-In is not authorized for this domain. Please:\n1. Go to Firebase Console > Authentication > Settings\n2. Add the current domain to "Authorized domains"\n3. For development: Add "localhost:5173" and "localhost:3000"\n4. For production: Add your app domain';
+      } else if (err.message?.includes('location.protocol')) {
+        friendlyError = 'Firebase requires the app to run on http:// or https://. Check that localhost:3000 is properly configured.';
+      }
+      
+      errorHandler.log('Auth-Google', err, { operation: 'signInWithGoogle', domain: window.location.hostname }, 'high');
+      throw new Error(friendlyError);
     }
   },
 
 
   logout: async () => {
     try {
-      await signOut(firebaseAuth);
+      if (firebaseAuth) {
+        await signOut(firebaseAuth);
+      }
       localStorage.removeItem('pos_session');
     } catch (err) {
       console.error('Logout failed:', err);
@@ -163,6 +231,10 @@ export const authClient = {
   },
 
   onAuthStateChange: (callback: (user: any) => void) => {
+    if (!firebaseAuth) {
+      callback(null);
+      return () => undefined;
+    }
     return onAuthStateChanged(firebaseAuth, (user) => {
       if (user) {
         callback({
@@ -177,4 +249,3 @@ export const authClient = {
     });
   }
 };
-

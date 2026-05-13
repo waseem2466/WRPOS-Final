@@ -15,6 +15,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     waGetStatus: () => ipcRenderer.invoke('wa-get-status'),
     waLink: () => ipcRenderer.invoke('wa-link'),
     waLogout: () => ipcRenderer.invoke('wa-logout'),
+    waResetSession: () => ipcRenderer.invoke('wa-reset-session'),
     onWaStatusUpdate: (callback) => {
         const sub = (_, data) => callback(data);
         ipcRenderer.on('wa-status-update', sub);
@@ -43,6 +44,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     waCloudGetHistory: (options) => ipcRenderer.invoke('wa-cloud-get-history', options || {}),
     waSetBotState: (active) => ipcRenderer.invoke('wa-set-bot-state', active),
     waGetBotConfig: () => ipcRenderer.invoke('wa-get-bot-config'),
+    waGetBotStatusDebug: () => ipcRenderer.invoke('wa-get-bot-status-debug'),
     waSetBotProvider: (provider) => ipcRenderer.invoke('wa-set-bot-provider', provider),
     onWaCloudMessage: (callback) => {
         const sub = (_, data) => callback(data);

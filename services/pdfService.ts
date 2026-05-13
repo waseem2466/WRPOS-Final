@@ -3,10 +3,61 @@ import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 import { Bill, BusinessSettings, Customer } from '../types';
 import { errorHandler } from './errorHandler';
+import { supabase } from '../src/services/supabase';
+
+const uploadInvoiceToSupabase = async (pdfBlob: Blob, invoiceNumber: string): Promise<string> => {
+    try {
+        if (!supabase) {
+            throw new Error('Supabase is not configured. Check VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.');
+        }
+
+        const safeInvoiceNumber = String(invoiceNumber || 'invoice').replace(/[^a-zA-Z0-9_-]/g, '_');
+        const fileName = `${safeInvoiceNumber}_${Date.now()}.pdf`;
+        const { error, data } = await supabase.storage
+            .from('invoices')
+            .upload(fileName, pdfBlob, {
+                contentType: 'application/pdf',
+                upsert: true
+            });
+
+        if (error) throw error;
+
+        const signedUrlResult = await supabase.storage
+            .from('invoices')
+            .createSignedUrl(data?.path || fileName, 60 * 60 * 24 * 90);
+
+        if (signedUrlResult.data?.signedUrl) {
+            return signedUrlResult.data.signedUrl;
+        }
+
+        const { data: { publicUrl } } = supabase.storage
+            .from('invoices')
+            .getPublicUrl(data?.path || fileName);
+
+        try {
+            const response = await fetch(publicUrl, { method: 'HEAD' });
+            if (!response.ok) {
+                throw new Error(`Public invoice URL returned ${response.status}`);
+            }
+        } catch (urlError) {
+            throw new Error('Invoice uploaded, but the PDF URL is not accessible. Make the Supabase "invoices" bucket public or allow signed URL SELECT access.');
+        }
+
+        return publicUrl;
+    } catch (error) {
+        console.error('Error uploading invoice:', error);
+        throw error;
+    }
+};
 
 
 export const pdfService = {
-    generateInvoice: async (bill: Bill, settings: BusinessSettings, customer?: Customer): Promise<void> => {
+    generateInvoice: async (
+        bill: Bill,
+        settings: BusinessSettings,
+        customer?: Customer,
+        options?: { download?: boolean }
+    ): Promise<string> => {
         try {
         const doc = new jsPDF() as any;
 
@@ -126,7 +177,13 @@ export const pdfService = {
         doc.setFont("helvetica", "normal");
         doc.text("Software Powered by WR POS", pageWidth / 2, footerY + 10, { align: 'center' });
 
-        doc.save(`${bill.invoiceNumber}_${new Date().getTime()}.pdf`);
+        const pdfBlob = doc.output('blob');
+        const downloadName = `${bill.invoiceNumber}_${new Date().getTime()}.pdf`;
+        if (options?.download !== false) {
+            doc.save(downloadName);
+        }
+
+        return await uploadInvoiceToSupabase(pdfBlob, bill.invoiceNumber);
         } catch (e: unknown) {
             const err = e instanceof Error ? e : new Error(String(e));
             errorHandler.log('PDF', err, { operation: 'generateInvoice', invoiceNumber: bill.invoiceNumber }, 'high');

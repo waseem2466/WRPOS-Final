@@ -35,44 +35,37 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const initSession = () => {
+    // 1. Check local storage session (DB auth or offline)
+    const storedSession = localStorage.getItem('pos_session');
+    if (storedSession) {
       try {
-        const stored = localStorage.getItem(SESSION_KEY);
-        if (stored) {
-          const session: Session = JSON.parse(stored);
-          const now = Date.now();
-
-          if (now - session.loginAt < SESSION_DURATION) {
-            setUser(session.user);
-            setToken(session.token);
-          } else {
-            // Session expired
-            localStorage.removeItem(SESSION_KEY);
-          }
+        const session = JSON.parse(storedSession);
+        if (Date.now() - session.loginAt < SESSION_DURATION) {
+          setUser(session.user);
+          setToken(session.token);
+        } else {
+          localStorage.removeItem('pos_session');
         }
       } catch (e) {
-        console.error("Session Parse Error", e);
-        localStorage.removeItem(SESSION_KEY);
-      } finally {
-        setLoading(false);
+        console.error("Session parse error", e);
       }
-    };
+    }
 
-    initSession();
+    // 2. Also listen for Firebase Auth State (Google / Firebase Email)
+    if (!firebaseAuth) {
+      setLoading(false);
+      return;
+    }
 
-    // Firebase Auth State Listener
     const unsubscribe = onAuthStateChanged(firebaseAuth, (firebaseUser) => {
       if (firebaseUser) {
         setUser({
           id: firebaseUser.uid,
-          name: firebaseUser.displayName || 'Firebase User',
+          name: firebaseUser.displayName || 'Google User',
           email: firebaseUser.email || '',
-          role: 'ADMIN_GUEST' // You can map real roles from Firestore here
+          role: 'ADMIN' // Default role
         });
         firebaseUser.getIdToken().then(setToken);
-      } else {
-        // Only clear if not in a legacy session? 
-        // For simplicity, let's let Firebase take precedence or keep them separate.
       }
       setLoading(false);
     });
@@ -80,27 +73,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return () => unsubscribe();
   }, []);
 
-
   const login = (userData: User, tokenValue: string) => {
     setUser(userData);
     setToken(tokenValue);
-
-    const session: Session = {
+    localStorage.setItem('pos_session', JSON.stringify({
       user: userData,
       token: tokenValue,
       loginAt: Date.now()
-    };
-
-    localStorage.setItem(SESSION_KEY, JSON.stringify(session));
+    }));
   };
 
   const logout = () => {
     setUser(null);
     setToken(null);
-    localStorage.removeItem(SESSION_KEY);
-    // Cleanup legacy keys if they exist
-    localStorage.removeItem('auth');
-    localStorage.removeItem('wr_pos_session');
+    localStorage.removeItem('pos_session');
+    // We don't import signOut directly at top if we don't want to change imports right now,
+    // but the system will eventually sign out via authClient
   };
 
   return (

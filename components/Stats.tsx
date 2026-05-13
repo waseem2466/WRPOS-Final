@@ -9,10 +9,12 @@ import {
 } from 'recharts';
 import {
   Target, Activity, Clock, Printer, RefreshCw, Loader2, RotateCcw,
-  Archive, FileBarChart, ListFilter, TrendingUp, DollarSign
+  Archive, FileBarChart, ListFilter, TrendingUp, DollarSign,
+  LineChart, Wallet, BadgePercent, Layers3
 } from 'lucide-react';
+import { audioService } from '../services/audio';
 
-const SHOP_LOGO = "https://res.cloudinary.com/wrsmile/image/upload/v1765617036/wr_smile_supplies_products/yses6ycpqormspldap12.jpg";
+const SHOP_LOGO = "https://res.cloudinary.com/wrsmile/image/upload/v1775821341/ChatGPT_Image_Apr_4_2026_03_28_27_PM_r3qaqz.png";
 
 export const Stats: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'overview' | 'profit' | 'history' | 'archive' | 'statement' | 'returns'>('overview');
@@ -79,50 +81,50 @@ export const Stats: React.FC = () => {
     };
 
     // Filter Today's Data
-    const todayBills = allBills.filter(b => {
+    const todayBills = (allBills as Bill[]).filter((b: Bill) => {
       const bDate = new Date(b.date);
       return bDate >= startOfToday && bDate <= endOfToday;
     });
 
-    const todayExpenses = allExpenses.filter(e => {
+    const todayExpenses = (allExpenses as Expense[]).filter((e: Expense) => {
       const eDate = new Date(e.date);
       return eDate >= startOfToday && eDate <= endOfToday;
-    }).reduce((sum, e) => sum + safeNum(e.amount), 0);
+    }).reduce((sum: number, e: Expense) => sum + safeNum(e.amount), 0);
 
-    const todayReturns = allReturns.filter(r => {
+    const todayReturns = (allReturns as ReturnRecord[]).filter((r: ReturnRecord) => {
       const rDate = new Date(r.date);
       return rDate >= startOfToday && rDate <= endOfToday;
     });
 
-    const todayReturnProfit = todayReturns.reduce((sum, r) => sum + safeNum(r.refundProfit), 0);
-    const todayReturnValue = todayReturns.reduce((sum, r) => sum + safeNum(r.refundValue), 0);
+    const todayReturnProfit = todayReturns.reduce((sum: number, r: ReturnRecord) => sum + safeNum(r.refundProfit), 0);
+    const todayReturnValue = todayReturns.reduce((sum: number, r: ReturnRecord) => sum + safeNum(r.refundValue), 0);
 
     // Aggregates
-    const totalPending = customers.reduce((sum, c) => sum + safeNum(c.balanceDue), 0);
-    const cashRev = allBills.filter(b => b.paymentType === 'CASH').reduce((sum, b) => sum + safeNum(b.total), 0);
-    const loanRev = allBills.filter(b => b.paymentType === 'LOAN').reduce((sum, b) => sum + safeNum(b.total), 0);
+    const totalPending = (customers as any[]).reduce((sum: number, c) => sum + safeNum(c.balanceDue), 0);
+    const cashRev = (allBills as Bill[]).filter(b => b.paymentType === 'CASH').reduce((sum: number, b) => sum + safeNum(b.total), 0);
+    const loanRev = (allBills as Bill[]).filter(b => b.paymentType === 'LOAN').reduce((sum: number, b) => sum + safeNum(b.total), 0);
 
-    const totalCogs = allBills.reduce((sum, b) => sum + safeNum(b.totalCost), 0);
-    const grossProfit = allBills.reduce((sum, b) => sum + safeNum(b.totalProfit), 0);
-    const totalExpenses = allExpenses.reduce((sum, e) => sum + safeNum(e.amount), 0);
+    const totalCogs = (allBills as Bill[]).reduce((sum: number, b) => sum + safeNum(b.totalCost), 0);
+    const grossProfit = (allBills as Bill[]).reduce((sum: number, b) => sum + safeNum(b.totalProfit), 0);
+    const totalExpenses = (allExpenses as Expense[]).reduce((sum: number, e) => sum + safeNum(e.amount), 0);
 
-    const totalReturnedVal = allReturns.reduce((sum, r) => sum + safeNum(r.refundValue), 0);
-    const totalReturnedProfit = allReturns.reduce((sum, r) => sum + safeNum(r.refundProfit), 0);
+    const totalReturnedVal = (allReturns as ReturnRecord[]).reduce((sum: number, r) => sum + safeNum(r.refundValue), 0);
+    const totalReturnedProfit = (allReturns as ReturnRecord[]).reduce((sum: number, r) => sum + safeNum(r.refundProfit), 0);
 
     // Adjusted Financials (Subtracting Returns)
     const activeProfit = grossProfit - totalReturnedProfit;
     const netTrueProfit = activeProfit - totalExpenses;
 
     const totalRevenue = (cashRev + loanRev) || 1;
-    const inventoryAsset = allProducts.reduce((sum, p) => sum + (safeNum(p.totalCost) * safeNum(p.stock)), 0);
+    const inventoryAsset = (allProducts as Product[]).reduce((sum: number, p) => sum + (safeNum(p.totalCost) * safeNum(p.stock)), 0);
 
     const catCounts: Record<string, number> = {};
-    allProducts.forEach(p => { if (p.category) catCounts[p.category] = (catCounts[p.category] || 0) + 1; });
+    (allProducts as Product[]).forEach(p => { if (p.category) catCounts[p.category] = (catCounts[p.category] || 0) + 1; });
     const topCat = Object.entries(catCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || 'N/A';
 
     setStats({
-      todaySales: todayBills.reduce((sum, b) => sum + safeNum(b.total), 0) - todayReturnValue,
-      todayProfit: todayBills.reduce((sum, b) => sum + safeNum(b.totalProfit), 0) - todayReturnProfit,
+      todaySales: (todayBills as Bill[]).reduce((sum: number, b) => sum + safeNum(b.total), 0) - todayReturnValue,
+      todayProfit: (todayBills as Bill[]).reduce((sum: number, b) => sum + safeNum(b.totalProfit), 0) - todayReturnProfit,
       todayExpenses,
       cashRevenue: cashRev,
       loanRevenue: loanRev,
@@ -215,8 +217,9 @@ export const Stats: React.FC = () => {
       await db.summaries.add(summary);
       alert("Month Closed Successfully. Data archived.");
       loadData();
-    } catch (e: any) {
-      alert("Error closing month: " + e.message);
+    } catch (e: unknown) {
+      const error = e as Error;
+      alert("Error closing month: " + error.message);
     } finally {
       setIsClosing(false);
     }
@@ -231,36 +234,70 @@ export const Stats: React.FC = () => {
     profit: Number(b.totalProfit || 0)
   }));
 
+  const executiveCards = [
+    {
+      label: "Today's Sales (Net)",
+      value: `LKR ${stats.todaySales.toLocaleString()}`,
+      tone: 'text-blue-300',
+      icon: Wallet,
+      frame: 'border-blue-500/15'
+    },
+    {
+      label: "Today's Profit",
+      value: `LKR ${stats.todayProfit.toLocaleString()}`,
+      tone: 'text-emerald-300',
+      icon: TrendingUp,
+      frame: 'border-emerald-500/15'
+    },
+    {
+      label: "True Net Profit",
+      value: `LKR ${stats.netTrueProfit.toLocaleString()}`,
+      tone: 'text-indigo-200',
+      icon: BadgePercent,
+      frame: 'border-indigo-500/15'
+    },
+    {
+      label: "Pending Loans",
+      value: `LKR ${stats.pendingLoans.toLocaleString()}`,
+      tone: 'text-yellow-300',
+      icon: Layers3,
+      frame: 'border-yellow-500/15'
+    }
+  ];
+
   return (
-    <div className="space-y-8 animate-fade-in relative print:p-0 h-full overflow-y-auto custom-scrollbar pr-2 pb-32">
+    <div className="space-y-6 animate-fade-in relative print:p-0 h-full overflow-y-auto custom-scrollbar pr-2 pb-20">
       {/* Header Pulser */}
-      <div className="p-1 bg-gradient-to-r from-blue-600/20 via-slate-900 to-emerald-600/20 bg-animate-gradient rounded-[2.5rem] border border-white/5 shadow-2xl backdrop-blur-2xl overflow-hidden relative print:hidden">
-        <div className="absolute inset-0 bg-gradient-to-r from-blue-500/5 via-transparent to-emerald-500/5 animate-pulse pointer-events-none"></div>
-        <div className="flex flex-col md:flex-row items-center justify-between px-8 py-6 gap-6 relative z-10">
-          <div className="flex items-center gap-5">
-            <div className="w-14 h-14 rounded-2xl bg-blue-600 flex items-center justify-center text-white shadow-lg shadow-blue-500/20">
+      <div className="p-1.5 liquid-shell bg-animate-gradient rounded-[2.6rem] overflow-hidden relative print:hidden">
+        <div className="absolute inset-0 bg-gradient-to-r from-blue-500/10 via-transparent to-emerald-500/10 animate-pulse pointer-events-none"></div>
+        <div className="flex flex-col xl:flex-row xl:items-center xl:justify-between px-6 md:px-8 xl:px-10 py-7 md:py-8 gap-6 relative z-10">
+          <div className="flex items-center gap-5 min-w-0">
+            <div className="w-14 h-14 rounded-[1.4rem] nav-liquid-active flex items-center justify-center text-white shrink-0">
               <Activity size={28} />
             </div>
-            <div>
+            <div className="min-w-0">
               <p className="text-[9px] font-black text-blue-400 uppercase tracking-[0.4em] mb-1">Fiscal Performance</p>
-              <h2 className="text-2xl font-black text-white uppercase tracking-tighter">Treasury Terminal</h2>
+              <h2 className="text-2xl md:text-[2rem] font-black text-white uppercase tracking-tighter" style={{ fontFamily: 'var(--font-display)' }}>Treasury Terminal</h2>
               <p className="text-[8px] text-gray-500 font-black uppercase tracking-widest flex items-center gap-2 mt-0.5">
-                <Clock size={10} /> Sync: {lastUpdated}
+                <span className="flex h-2 w-2 relative">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                </span>
+                Live Sync: {lastUpdated}
               </p>
             </div>
           </div>
 
-          <div className="flex flex-col md:flex-row gap-8 items-center">
-            <div className="text-center md:text-right">
+          <div className="grid grid-cols-2 xl:flex gap-4 md:gap-6 w-full xl:w-auto">
+            <div className="liquid-stat-chip text-center xl:text-right">
               <p className="text-[9px] font-black text-gray-500 uppercase tracking-[0.2em] mb-1">Today's Revenue</p>
-              <p className="text-3xl font-black text-white font-mono tracking-tighter text-glow-premium">
+              <p className="text-2xl md:text-3xl font-black text-white font-mono tracking-tighter text-glow-premium">
                 LKR {stats.todaySales.toLocaleString()}
               </p>
             </div>
-            <div className="h-10 w-px bg-white/10 hidden md:block"></div>
-            <div className="text-center md:text-right">
+            <div className="liquid-stat-chip text-center xl:text-right">
               <p className="text-[9px] font-black text-gray-500 uppercase tracking-[0.2em] mb-1">True Net Margin</p>
-              <p className={`text-3xl font-black font-mono tracking-tighter text-glow-premium ${netMarginPerc > 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+              <p className={`text-2xl md:text-3xl font-black font-mono tracking-tighter text-glow-premium ${netMarginPerc > 0 ? 'text-emerald-400' : 'text-red-400'}`}>
                 {netMarginPerc.toFixed(1)}%
               </p>
             </div>
@@ -269,25 +306,27 @@ export const Stats: React.FC = () => {
       </div>
 
       {/* Tab Selection */}
-      <div className="flex flex-col md:flex-row justify-between items-center gap-4 print:hidden">
-        <div className="flex flex-wrap gap-1.5 bg-white/5 p-1.5 rounded-2xl border border-white/10 w-fit">
-          <button onClick={() => setActiveTab('overview')} className={`flex items-center gap-2.5 px-5 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all ${activeTab === 'overview' ? 'bg-blue-600 text-white' : 'text-gray-500'}`}><Target size={12} /> Executive</button>
-          <button onClick={() => setActiveTab('statement')} className={`flex items-center gap-2.5 px-5 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all ${activeTab === 'statement' ? 'bg-indigo-600 text-white' : 'text-gray-500'}`}><FileBarChart size={12} /> Statement</button>
-          <button onClick={() => setActiveTab('history')} className={`flex items-center gap-2.5 px-5 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all ${activeTab === 'history' ? 'bg-emerald-600 text-white' : 'text-gray-500'}`}><ListFilter size={12} /> Audit</button>
-          <button onClick={() => setActiveTab('returns')} className={`flex items-center gap-2.5 px-5 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all ${activeTab === 'returns' ? 'bg-orange-600 text-white' : 'text-gray-500'}`}><RotateCcw size={12} /> Returns</button>
-          <button onClick={() => setActiveTab('archive')} className={`flex items-center gap-2.5 px-5 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all ${activeTab === 'archive' ? 'bg-orange-600 text-white' : 'text-gray-500'}`}><Archive size={12} /> Vault</button>
+      <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-5 print:hidden">
+        <div className="w-full xl:w-auto overflow-x-auto no-scrollbar">
+        <div className="flex gap-2.5 liquid-shell p-2 rounded-[2rem] w-max">
+          <button onClick={() => { audioService.playBeep(); setActiveTab('overview'); }} className={`flex items-center gap-3 px-6 md:px-8 py-3.5 premium-chip tap-lift text-[10px] font-black uppercase tracking-[0.24em] transition-all ${activeTab === 'overview' ? 'nav-liquid-active' : 'nav-liquid-idle'}`}><Target size={14} /> Executive</button>
+          <button onClick={() => { audioService.playBeep(); setActiveTab('statement'); }} className={`flex items-center gap-3 px-6 md:px-8 py-3.5 premium-chip tap-lift text-[10px] font-black uppercase tracking-[0.24em] transition-all ${activeTab === 'statement' ? 'nav-liquid-active' : 'nav-liquid-idle'}`}><FileBarChart size={14} /> Statement</button>
+          <button onClick={() => { audioService.playBeep(); setActiveTab('history'); }} className={`flex items-center gap-3 px-6 md:px-8 py-3.5 premium-chip tap-lift text-[10px] font-black uppercase tracking-[0.24em] transition-all ${activeTab === 'history' ? 'nav-liquid-active' : 'nav-liquid-idle'}`}><ListFilter size={14} /> Audit</button>
+          <button onClick={() => { audioService.playBeep(); setActiveTab('returns'); }} className={`flex items-center gap-3 px-6 md:px-8 py-3.5 premium-chip tap-lift text-[10px] font-black uppercase tracking-[0.24em] transition-all ${activeTab === 'returns' ? 'nav-liquid-active' : 'nav-liquid-idle'}`}><RotateCcw size={14} /> Returns</button>
+          <button onClick={() => { audioService.playBeep(); setActiveTab('archive'); }} className={`flex items-center gap-3 px-6 md:px-8 py-3.5 premium-chip tap-lift text-[10px] font-black uppercase tracking-[0.24em] transition-all ${activeTab === 'archive' ? 'nav-liquid-active' : 'nav-liquid-idle'}`}><Archive size={14} /> Vault</button>
+        </div>
         </div>
 
-        <div className="flex gap-3">
-          <button onClick={handlePrintDailyClose} className="flex items-center gap-2.5 px-6 py-2.5 bg-blue-600/10 border border-blue-500/20 rounded-2xl text-[9px] font-black text-blue-400 uppercase tracking-widest hover:bg-blue-600 hover:text-white transition-all shadow-xl shadow-blue-600/10">
-            <Printer size={14} /> X-Report
+        <div className="flex flex-wrap gap-3 w-full xl:w-auto">
+          <button onClick={handlePrintDailyClose} className="flex items-center gap-3 px-6 md:px-8 py-3.5 premium-button tap-lift liquid-shell text-[10px] font-black text-blue-300 uppercase tracking-[0.24em] hover:text-white transition-all">
+            <Printer size={16} /> X-Report
           </button>
           <button
             onClick={handleCloseMonth}
             disabled={isClosing}
-            className="flex items-center gap-3 px-6 py-2.5 bg-red-600/10 border border-red-500/20 rounded-2xl text-[9px] font-black text-red-500 uppercase tracking-widest hover:bg-red-600 hover:text-white transition-all shadow-xl shadow-red-600/10"
+            className="flex items-center gap-4 px-6 md:px-8 py-3.5 premium-button tap-lift bg-red-600/10 border border-red-500/20 text-[10px] font-black text-red-500 uppercase tracking-[0.24em] hover:bg-red-600 hover:text-white transition-all shadow-xl shadow-red-600/10"
           >
-            {isClosing ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+            {isClosing ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
             Finalize Month
           </button>
         </div>
@@ -310,28 +349,25 @@ export const Stats: React.FC = () => {
             `}
           />
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
-            <GlassCard className="group border-blue-500/10">
-              <p className="text-gray-500 text-[9px] font-black uppercase tracking-widest mb-1">Today's Sales (Net)</p>
-              <h3 className="text-xl font-black text-white font-mono">LKR {stats.todaySales.toLocaleString()}</h3>
-            </GlassCard>
-            <GlassCard className="group border-emerald-500/10">
-              <p className="text-gray-500 text-[9px] font-black uppercase tracking-widest mb-1">Today's Profit</p>
-              <h3 className="text-xl font-black text-emerald-400 font-mono">LKR {stats.todayProfit.toLocaleString()}</h3>
-            </GlassCard>
-            <GlassCard className="group border-indigo-500/10">
-              <p className="text-gray-500 text-[9px] font-black uppercase tracking-widest mb-1">True Net Profit</p>
-              <h3 className="text-xl font-black text-white font-mono">LKR {stats.netTrueProfit.toLocaleString()}</h3>
-            </GlassCard>
-            <GlassCard className="group border-yellow-500/10">
-              <p className="text-gray-500 text-[9px] font-black uppercase tracking-widest mb-1">Pending Loans</p>
-              <h3 className="text-xl font-black text-yellow-400 font-mono">LKR {stats.pendingLoans.toLocaleString()}</h3>
-            </GlassCard>
+          <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-4 gap-5">
+            {executiveCards.map(({ label, value, tone, icon: Icon, frame }) => (
+              <GlassCard key={label} className={`group border ${frame} overflow-hidden tap-lift`}>
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <p className="text-gray-500 text-[9px] font-black uppercase tracking-widest mb-2">{label}</p>
+                    <h3 className={`text-xl xl:text-2xl font-black font-mono ${tone}`}>{value}</h3>
+                  </div>
+                    <div className="w-12 h-12 rounded-[1.1rem] border border-white/10 bg-white/5 flex items-center justify-center shrink-0 shadow-[0_16px_28px_rgba(2,6,23,0.16)]">
+                    <Icon size={18} className={tone} />
+                  </div>
+                </div>
+              </GlassCard>
+            ))}
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-            <div className="lg:col-span-2 space-y-6">
-              <GlassCard className="h-96">
+          <div className="grid grid-cols-1 2xl:grid-cols-[minmax(0,1.65fr)_minmax(320px,0.8fr)] gap-5">
+            <div className="space-y-5">
+              <GlassCard className="h-96 liquid-section-shell">
                 <h4 className="text-xs font-black text-white uppercase tracking-widest mb-6">Recent Sales Trajectory</h4>
                 <div className="h-72">
                   <ResponsiveContainer width="100%" height="100%">
@@ -349,19 +385,20 @@ export const Stats: React.FC = () => {
                         contentStyle={{ backgroundColor: '#0f172a', border: '1px solid #ffffff10', borderRadius: '12px', fontSize: '10px' }}
                         itemStyle={{ color: '#fff', fontWeight: '900' }}
                       />
-                      <Area type="monotone" dataKey="revenue" stroke="#3b82f6" strokeWidth={3} fillOpacity={1} fill="url(#colorRev)" />
+                      <Area type="monotone" dataKey="revenue" stroke="#3b82f6" strokeWidth={4} fillOpacity={1} fill="url(#colorRev)" animationDuration={1500} />
+                      <Area type="monotone" dataKey="profit" stroke="#10b981" strokeWidth={2} fillOpacity={0} animationDuration={2000} />
                     </AreaChart>
                   </ResponsiveContainer>
                 </div>
               </GlassCard>
             </div>
 
-            <div className="space-y-6">
-              <GlassCard className="border-emerald-500/10">
+            <div className="space-y-5">
+              <GlassCard className="border-emerald-500/10 liquid-section-shell">
                 <h4 className="text-[10px] font-black text-white uppercase tracking-widest mb-6">Top Product Yields</h4>
                 <div className="space-y-4">
                   {products.sort((a, b) => (b.marginValue) - (a.marginValue)).slice(0, 4).map(p => (
-                    <div key={p.id} className="flex items-center justify-between p-3 rounded-2xl bg-white/5 border border-white/5">
+                    <div key={p.id} className="flex items-center justify-between p-3 rounded-2xl bg-white/5 border border-white/5 tap-lift">
                       <div>
                         <p className="text-[10px] font-black text-white uppercase truncate max-w-[120px]">{p.name}</p>
                         <p className="text-[8px] text-gray-500 font-bold uppercase">{p.category}</p>
@@ -404,7 +441,7 @@ export const Stats: React.FC = () => {
                     </div>
                     <div>
                       <p className="text-[11px] font-black text-white uppercase">{r.productName || 'Line Item'}</p>
-                      <p className="text-[8px] text-gray-600 font-bold uppercase tracking-widest">Qty: {r.quantity} • Inv: #{r.billId.slice(-6)} • {new Date(r.date).toLocaleDateString()}</p>
+                      <p className="text-[8px] text-gray-600 font-bold uppercase tracking-widest">Qty: {r.quantity} - Inv: #{r.billId.slice(-6)} - {new Date(r.date).toLocaleDateString()}</p>
                     </div>
                   </div>
                   <div className="flex items-center gap-8">

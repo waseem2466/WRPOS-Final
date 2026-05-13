@@ -2,56 +2,56 @@ import { Bill, BusinessSettings, Customer } from '../types';
 import { cleanPhone } from './utils';
 import { errorHandler } from './errorHandler';
 
-
-const SHOP_LOGO = "https://res.cloudinary.com/wrsmile/image/upload/v1765617036/wr_smile_supplies_products/yses6ycpqormspldap12.jpg";
 const GROUP_LINK = "https://chat.whatsapp.com/K7ALigMk9ad4SBlcRUqoxX?mode=wwt";
 
 export const whatsappService = {
-    generateReceiptMessage: (bill: Bill, settings: BusinessSettings): string => {
+    generateReceiptMessage: (bill: Bill, settings: BusinessSettings, invoiceUrl?: string): string => {
         const businessName = settings.businessName || 'WR Smile & Supplies';
-        const businessAddress = settings.address || '411/7, Kandy Road, Mollipothana';
+        const supportPhone = settings.contactPhone || '0719336848';
+        const visibleItems = bill.items.slice(0, 8);
+        const hiddenItemCount = Math.max(0, bill.items.length - visibleItems.length);
 
-        const welcomeMsg = `┏━━━━━━━━━━━━━━━━━━━━━━━━┓\n` +
-            `       *${businessName.toUpperCase()}* 💎\n` +
-            `┗━━━━━━━━━━━━━━━━━━━━━━━━┛\n\n` +
-            `*Welcome to Smile & Supplies!* 🛒\n` +
-            `We offer a variety of online products, including kitchen accessories, home essentials, kids' items, and stationery.\n\n` +
-            `📍 ${businessAddress}\n` +
-            `📧 Email: smileandsupplies@outlook.com\n` +
-            `📞 Hotline: 0719336848\n\n` +
-            `"Explore, shop, and enjoy quality products at affordable prices. Feel free to reach out for inquiries or orders!"\n\n` +
-            `🔗 *Join Our WhatsApp Group:* \n${GROUP_LINK}\n`;
+        const itemsText = visibleItems.map(i => {
+            const lineGross = i.price * i.quantity;
+            const discountValue = i.discountValue || 0;
+            const lineDiscount = i.discountType === 'PERCENTAGE'
+                ? lineGross * (discountValue / 100)
+                : discountValue;
+            const lineTotal = Math.max(0, lineGross - lineDiscount);
 
-        const itemsText = bill.items.map(i => {
-            const lineTotal = (i.price - (i.discountValue || 0)) * i.quantity;
-            let text = `📦 *${i.name.toUpperCase()}*\n   ${i.quantity} x LKR ${i.price.toLocaleString()}`;
-            if (i.discountValue && i.discountValue > 0) text += `\n   Disc: -LKR ${(i.discountValue * i.quantity).toLocaleString()}`;
-            text += `\n   *Sub: LKR ${lineTotal.toLocaleString()}*`;
+            let text = `- ${i.name} (${i.quantity} x LKR ${i.price.toLocaleString()})`;
+            if (lineDiscount > 0) {
+                text += ` | Disc: -LKR ${lineDiscount.toLocaleString()}`;
+            }
+            text += ` | Sub: LKR ${lineTotal.toLocaleString()}`;
             return text;
-        }).join('\n\n');
+        }).join('\n');
 
         const paid = bill.cashReceived || 0;
         const balanceDue = Math.max(0, bill.total - paid);
+        const paymentLabel = balanceDue > 0.1 && paid > 0 ? 'Advance Paid' : 'Paid';
+        const balanceLabel = paid > 0 ? 'Remaining Balance' : 'Balance Due';
 
-        const bankDetails = `\n─────────────────────\n` +
-            `🏦 *SETTLEMENT ACCOUNT (LOAN ONLY)*\n` +
-            `*Bank:* BOC (Bank of Ceylon)\n` +
-            `*A/C:* 95733864\n` +
-            `*Name:* N K W Khan\n` +
-            `*Branch:* Main Branch\n` +
-            `─────────────────────`;
+        const bankDetails = `\n*Settlement Account*\n` +
+            `Bank: BOC (Bank of Ceylon)\n` +
+            `A/C: 95733864\n` +
+            `Name: N K W Khan\n` +
+            `Branch: Main Branch`;
 
-        return `${welcomeMsg}\n` +
-            `🧾 *INVOICE: #${bill.invoiceNumber}*\n` +
-            `📅 Date: ${new Date(bill.date).toLocaleDateString()}\n` +
-            `👤 Client: ${bill.customerName}\n\n` +
-            `*ORDER SUMMARY:*\n${itemsText}\n\n` +
-            `📊 *FINAL TOTAL: LKR ${bill.total.toLocaleString()}*\n` +
-            `💰 Paid: LKR ${paid.toLocaleString()}\n` +
-            (balanceDue > 0.1 ? `⚠️ *BALANCE DUE: LKR ${balanceDue.toLocaleString()}*\n` : `✅ *FULLY PAID*\n`) +
+        return `*${businessName}*\n` +
+            `Invoice: #${bill.invoiceNumber}\n` +
+            `Date: ${new Date(bill.date).toLocaleDateString()}\n` +
+            `Client: ${bill.customerName}\n\n` +
+            `*Items*\n${itemsText || '- No items'}\n` +
+            (hiddenItemCount > 0 ? `+ ${hiddenItemCount} more item(s)\n` : '') +
+            `\n*Final Total: LKR ${bill.total.toLocaleString()}*\n` +
+            `${paymentLabel}: LKR ${paid.toLocaleString()}\n` +
+            (balanceDue > 0.1 ? `*${balanceLabel.toUpperCase()}: LKR ${balanceDue.toLocaleString()}*\n` : `*FULLY PAID*\n`) +
             (balanceDue > 0.1 ? bankDetails : '') +
-            `\n\n*${settings.receiptNote || 'Premium Quality. Professional Service.'}* 🤝\n` +
-            `Powered by ${businessName} 🤖`;
+            (invoiceUrl ? `\nInvoice PDF: ${invoiceUrl}` : '') +
+            `\n\n${settings.receiptNote || 'Thank you for shopping with us.'}` +
+            `\nHotline: ${supportPhone}` +
+            (balanceDue > 0.1 ? `\nSupport: ${GROUP_LINK}` : '');
     },
 
     getTemplateByLanguage: (lang: string) => {
@@ -60,83 +60,81 @@ export const whatsappService = {
         return 'bill_total_notification';
     },
 
-    sendBillTemplate: async (settings: BusinessSettings, customer: Customer, bill: Bill): Promise<void> => {
+    sendBillTemplate: async (
+        settings: BusinessSettings,
+        customer: Customer,
+        bill: Bill,
+        options?: { invoiceUrl?: string }
+    ): Promise<void> => {
         const customerPhone = customer.phone;
         if (!customerPhone) return;
 
-        const hasCloud = settings.waAccessToken && settings.waPhoneNumberId;
-
-        if (hasCloud) {
-            const template = whatsappService.getTemplateByLanguage(customer.language || 'en');
-
-            const params = [
-                customer.name || 'Customer',
-                'WR SMILE SUPPLIES',
-                bill.invoiceNumber,
-                bill.total.toString()
-            ];
-
-            try {
-                await (window as any).electronAPI?.waCloudSendTemplate?.({
-                    to: customerPhone,
-                    template,
-                    language: customer.language === 'ta' ? 'ta' : (customer.language === 'si' ? 'si' : 'en_US'),
-                    params
-                });
-
-                const fullMessage = whatsappService.generateReceiptMessage(bill, settings);
-                await whatsappService.sendDirect(settings, customerPhone, fullMessage);
-                return;
-
-            } catch (error: unknown) {
-                const err = error instanceof Error ? error : new Error(String(error));
-                errorHandler.log('WhatsApp', err, { operation: 'sendBillTemplate', type: 'cloud' }, 'medium');
-            }
-
-        }
-
         try {
-            const message = whatsappService.generateReceiptMessage(bill, settings);
-            await whatsappService.sendDirect(settings, customerPhone, message);
+            const message = whatsappService.generateReceiptMessage(bill, settings, options?.invoiceUrl);
+            const result = await whatsappService.sendDirect(settings, customerPhone, message, options);
+            if (!result.success) throw new Error(result.error);
         } catch (e: unknown) {
-
             const err = e instanceof Error ? e : new Error(String(e));
-            errorHandler.log('WhatsApp', err, { operation: 'sendBillTemplate', type: 'fallback' }, 'high');
+            errorHandler.log('WhatsApp', err, { operation: 'sendBillTemplate', type: 'qr-only' }, 'high');
+            throw err;
         }
-
     },
 
-    sendDirect: async (settings: BusinessSettings, phone: string, message: string): Promise<void> => {
-
+    sendDirect: async (
+        settings: BusinessSettings,
+        phone: string,
+        message: string,
+        options?: { invoiceUrl?: string }
+    ): Promise<{ success: boolean, error?: string }> => {
         const cleanedPhone = cleanPhone(phone);
-        if (!cleanedPhone) return;
+        if (!cleanedPhone) return { success: false, error: "Invalid phone number" };
 
-        if (settings.waAccessToken && settings.waPhoneNumberId) {
+        const cloudToken = settings?.waAccessToken?.trim();
+        const cloudPhoneNumberId = settings?.waPhoneNumberId?.trim();
+        let cloudError = '';
+
+        if (cloudToken && cloudPhoneNumberId) {
             try {
-                await (window as any).electronAPI?.waCloudSend?.({ to: cleanedPhone, message: message });
-                return;
-            } catch (error: unknown) {
-                const err = error instanceof Error ? error : new Error(String(error));
+                const response = await (window as any).electronAPI?.waCloudSend?.({
+                    to: cleanedPhone,
+                    message,
+                    documentUrl: options?.invoiceUrl,
+                    documentName: options?.invoiceUrl ? `${Date.now()}_invoice.pdf` : undefined,
+                    token: cloudToken,
+                    phoneNumberId: cloudPhoneNumberId
+                });
+                if (response?.success) return { success: true };
+                cloudError = response?.error || 'Cloud sending failed';
+            } catch (e: unknown) {
+                const err = e instanceof Error ? e : new Error(String(e));
+                cloudError = err.message || 'Cloud sending failed';
                 errorHandler.log('WhatsApp', err, { operation: 'sendDirect', type: 'cloud' }, 'medium');
             }
-
         }
 
         try {
-            await (window as any).electronAPI?.waQrSend?.({ to: cleanedPhone, message: message });
+            const response = await (window as any).electronAPI?.waQrSend?.({ to: cleanedPhone, message });
+            if (!response?.success) {
+                const errorText = response?.error || 'QR sending failed';
+                throw new Error(errorText);
+            }
+            return { success: true };
         } catch (qrError: unknown) {
             const err = qrError instanceof Error ? qrError : new Error(String(qrError));
-            errorHandler.log('WhatsApp', err, { operation: 'sendDirect', type: 'qr' }, 'medium');
+            errorHandler.log('WhatsApp', err, { operation: 'sendDirect', type: 'qr-only' }, 'medium');
+            return {
+                success: false,
+                error: cloudError ? `Cloud failed: ${cloudError}. QR failed: ${err.message}` : (err.message || "QR sending failed")
+            };
         }
-
     },
 
     verifyConnection: async (settings: BusinessSettings): Promise<boolean> => {
         if (!settings.waAccessToken || !settings.waPhoneNumberId) return false;
         try {
             await (window as any).electronAPI?.waCloudSend?.({
-                to: "94719336848",
-                message: `✅ ${settings.businessName}: Connection Verified!`
+                to: cleanPhone("0719336848"),
+                message: `Connection verified for ${settings.businessName}`
             });
             return true;
         } catch (e: unknown) {

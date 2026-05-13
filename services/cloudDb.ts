@@ -16,6 +16,7 @@ import { db, storage } from "./firebase";
 export const cloudDb = {
     // Sync any data to Firestore
     syncToCloud: async (collectionName: string, id: string, data: any) => {
+        if (!db) return { success: true }; // Firebase disabled
         try {
             const docRef = doc(db, collectionName, id);
             await setDoc(docRef, {
@@ -44,6 +45,9 @@ export const cloudDb = {
     // Upload file to Firebase Storage
     uploadFile: async (path: string, file: Blob | Uint8Array) => {
         try {
+            if (!storage) {
+                throw new Error('Firebase Storage is not configured');
+            }
             const storageRef = ref(storage, path);
             const snapshot = await uploadBytes(storageRef, file);
             const url = await getDownloadURL(snapshot.ref);

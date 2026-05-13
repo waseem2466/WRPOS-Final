@@ -3,23 +3,19 @@ import React, { useState, useEffect, useRef } from 'react';
 import { GlassCard } from './ui/GlassCard';
 import { GlassInput } from './ui/GlassInput';
 import { db } from '../services/mockDb';
-import { BusinessSettings, AIConfig } from '../types';
+import { BusinessSettings, Bill, Product, Expense } from '../types';
 import { generateCSV, generateSystemBackup } from '../services/utils';
-import { loadAIConfig, saveAIConfig } from '../services/ai';
 import {
   Save, Building, CheckCircle, Loader2,
   FileText, Image as ImageIcon,
   Database, Download, FileSpreadsheet,
   HardDrive, Activity, ShieldCheck, ShieldAlert,
   Trash2, Terminal, FileJson, Users, ShoppingCart, Package, Wallet,
-  UploadCloud, RefreshCw, Smartphone
+  UploadCloud, Smartphone
 } from 'lucide-react';
-import { WhatsAppBotUI } from './WhatsAppBotUI';
-import { smsService } from '../services/smsService';
 
 export const SettingsManager: React.FC = () => {
   const [settings, setSettings] = useState<BusinessSettings | null>(null);
-  const [aiConfig, setAiConfig] = useState<AIConfig | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
   const [isExporting, setIsExporting] = useState<string | null>(null);
@@ -29,25 +25,7 @@ export const SettingsManager: React.FC = () => {
 
   useEffect(() => {
     loadSettings();
-    const config = loadAIConfig();
-    setAiConfig(config);
-
-    // Sync with backend persistent config
-    window.electronAPI?.waGetBotConfig?.().then((botConfig: any) => {
-      if (botConfig && botConfig.aiProvider) {
-        setAiConfig(prev => prev ? ({ ...prev, provider: botConfig.aiProvider }) : null);
-      }
-    });
   }, []);
-
-  const handleProviderChange = async (provider: string) => {
-    if (!aiConfig) return;
-    const newConfig = { ...aiConfig, provider: provider as any };
-    setAiConfig(newConfig);
-    saveAIConfig(newConfig);
-    // Update background bot provider
-    await window.electronAPI?.waSetBotProvider?.(provider);
-  };
 
   const loadSettings = async () => {
     const s = await db.settings.get();
@@ -60,14 +38,6 @@ export const SettingsManager: React.FC = () => {
     setIsSaving(true);
     try {
       await db.settings.update(settings);
-      if (aiConfig) saveAIConfig(aiConfig);
-
-      // Save SMS Gateway config
-      await smsService.saveConfig({
-        url: settings.smsGatewayUrl || '',
-        token: settings.smsGatewayToken || '',
-        globalToken: settings.smsGatewayGlobalToken || ''
-      });
 
       setShowSuccess(true);
       setTimeout(() => setShowSuccess(false), 3000);
@@ -86,7 +56,7 @@ export const SettingsManager: React.FC = () => {
       switch (type) {
         case 'SALES':
           const bills = await db.bills.getAll(false);
-          data = bills.map(b => ({
+          data = (bills as Bill[]).map((b: Bill) => ({
             Invoice: b.invoiceNumber,
             Date: new Date(b.date).toLocaleDateString(),
             Time: new Date(b.date).toLocaleTimeString(),
@@ -101,7 +71,7 @@ export const SettingsManager: React.FC = () => {
 
         case 'INVENTORY':
           const products = await db.products.getAll();
-          data = products.map(p => ({
+          data = (products as Product[]).map((p: Product) => ({
             Name: p.name,
             Category: p.category,
             SKU: p.sku || '',
@@ -116,7 +86,7 @@ export const SettingsManager: React.FC = () => {
 
         case 'CUSTOMERS':
           const customers = await db.customers.getAll();
-          data = customers.map(c => ({
+          data = (customers as any[]).map((c: any) => ({
             Name: c.name,
             Phone: c.phone,
             Address: c.address || '',
@@ -129,7 +99,7 @@ export const SettingsManager: React.FC = () => {
 
         case 'EXPENSES':
           const expenses = await db.expenses.getAll();
-          data = expenses.map(e => ({
+          data = (expenses as Expense[]).map((e: Expense) => ({
             Date: new Date(e.date).toLocaleDateString(),
             Category: e.category,
             Amount: e.amount,
@@ -272,7 +242,7 @@ timeout /t 5`;
                 <div className="relative inline-block group cursor-pointer">
                   <div className="w-32 h-32 bg-white rounded-[2rem] mx-auto overflow-hidden border border-white/10 shadow-2xl relative">
                     <img
-                      src={settings.logoUrl || "https://res.cloudinary.com/wrsmile/image/upload/v1765617036/wr_smile_supplies_products/yses6ycpqormspldap12.jpg"}
+                      src={settings.logoUrl || "https://res.cloudinary.com/wrsmile/image/upload/v1775821341/ChatGPT_Image_Apr_4_2026_03_28_27_PM_r3qaqz.png"}
                       className="w-full h-full object-contain p-2 group-hover:scale-110 transition-transform duration-700"
                       alt="Business Logo"
                     />
@@ -556,125 +526,6 @@ timeout /t 5`;
                         </button>
                       </div>
                     </div>
-                  </div>
-                </section>
-
-                <section className="space-y-6">
-                  <div className="flex items-center gap-4 border-b border-white/5 pb-4">
-                    <div className="w-12 h-12 bg-emerald-600/20 text-emerald-500 rounded-xl flex items-center justify-center border border-emerald-500/10">
-                      <Smartphone size={24} />
-                    </div>
-                    <div>
-                      <h3 className="text-base font-black text-white uppercase tracking-tight">AI WhatsApp Assistant</h3>
-                      <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">Connect your mobile for AI Chat</p>
-                    </div>
-                  </div>
-                  <WhatsAppBotUI />
-                </section>
-
-                {/* Section: Traccar SMS Gateway */}
-                <section className="space-y-6">
-                  <div className="flex items-center gap-4 border-b border-white/5 pb-4">
-                    <div className="w-12 h-12 bg-amber-600/20 text-amber-500 rounded-xl flex items-center justify-center border border-amber-500/10">
-                      <Smartphone size={24} />
-                    </div>
-                    <div>
-                      <h3 className="text-base font-black text-white uppercase tracking-tight">Traccar SMS Gateway</h3>
-                      <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">Global & Local SMS Integration</p>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 gap-6">
-                    <GlassInput
-                      label="Gateway Endpoint (URL)"
-                      placeholder="http://192.168.8.149:8082"
-                      value={settings.smsGatewayUrl || ''}
-                      onChange={e => setSettings({ ...settings, smsGatewayUrl: e.target.value })}
-                      className="text-sm"
-                    />
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                      <GlassInput
-                        label="Local Access Token"
-                        type="password"
-                        value={settings.smsGatewayToken || ''}
-                        onChange={e => setSettings({ ...settings, smsGatewayToken: e.target.value })}
-                        className="text-sm"
-                      />
-                      <GlassInput
-                        label="Global Token (FCM)"
-                        type="password"
-                        value={settings.smsGatewayGlobalToken || ''}
-                        onChange={e => setSettings({ ...settings, smsGatewayGlobalToken: e.target.value })}
-                        className="text-sm"
-                      />
-                    </div>
-                    <div className="flex justify-end">
-                      <button
-                        type="button"
-                        onClick={async () => {
-                          const ok = await smsService.verifyConnection(settings);
-                          alert(ok ? "SMS Gateway Connection Success! Test message sent." : "SMS Gateway Connection Failed. Check credentials/URL.");
-                        }}
-                        className="w-full md:w-auto px-8 py-3.5 bg-amber-600/10 border border-amber-500/30 text-amber-400 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-amber-600 hover:text-white transition-all"
-                      >
-                        Test SMS Gateway
-                      </button>
-                    </div>
-                  </div>
-                </section>
-
-                {/* Section: AI Intelligence (New) */}
-                <section className="space-y-6">
-                  <div className="flex items-center gap-4 border-b border-white/5 pb-4">
-                    <div className="w-12 h-12 bg-purple-600/20 text-purple-500 rounded-xl flex items-center justify-center border border-purple-500/10">
-                      <Terminal size={24} />
-                    </div>
-                    <div>
-                      <h3 className="text-base font-black text-white uppercase tracking-tight">AI Intelligence Core</h3>
-                      <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">Configure Brain Power</p>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div className="space-y-2">
-                      <label className="text-[10px] uppercase font-bold text-gray-400 tracking-widest ml-1">AI Provider</label>
-                      <select
-                        value={aiConfig?.provider || 'gemini'}
-                        onChange={e => handleProviderChange(e.target.value)}
-                        className="w-full bg-[#0b1121] border border-white/10 rounded-xl p-4 text-sm text-white focus:outline-none focus:border-blue-500 transition-colors"
-                      >
-                        <option value="gemini">Google Gemini (Cloud)</option>
-                        <option value="local-phi">Local Phi-3 (Ollama)</option>
-                        <option value="ollama-cloud">Ollama Cloud (ollama.com)</option>
-                      </select>
-                    </div>
-
-                    <div className="space-y-2">
-                      <label className="text-[10px] uppercase font-bold text-gray-400 tracking-widest ml-1">Model Name</label>
-                      <div className="relative">
-                        <input
-                          type="text"
-                          list="ai-models"
-                          placeholder={'default'}
-                          value={aiConfig?.model || ''}
-                          onChange={e => setAiConfig(prev => prev ? ({ ...prev, model: e.target.value }) : null)}
-                          className="w-full bg-[#0b1121] border border-white/10 rounded-xl p-4 text-sm text-white focus:outline-none focus:border-blue-500 transition-colors"
-                        />
-                        <datalist id="ai-models">
-
-                          <option value="gpt-oss:120b-cloud" />
-                        </datalist>
-                        <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-[10px] text-gray-500 font-bold uppercase">
-                          CUSTOMIZABLE
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="p-4 bg-blue-500/5 border border-blue-500/10 rounded-xl">
-                    <p className="text-[10px] text-blue-400">
-                      <strong>Note:</strong> AI Settings are saved locally on this device. All providers are cloud-based web services. Set API keys in your .env file.
-                    </p>
                   </div>
                 </section>
 

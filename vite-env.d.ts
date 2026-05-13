@@ -3,6 +3,11 @@
 interface ImportMetaEnv {
     readonly VITE_GEMINI_API_KEY: string
     readonly VITE_DEEPSEEK_API_KEY: string
+    readonly VITE_GROQ_API_KEY: string
+    readonly VITE_ZHIPU_AI_API_KEY: string
+    readonly VITE_OLLAMA_CLOUD_API_KEY: string
+    readonly VITE_OLLAMA_CLOUD_MODEL: string
+    readonly VITE_LOCAL_OLLAMA_MODEL: string
     readonly VITE_FIREBASE_API_KEY: string
     readonly VITE_FIREBASE_AUTH_DOMAIN: string
     readonly VITE_FIREBASE_PROJECT_ID: string
@@ -22,4 +27,8 @@ interface Window {
         askAI: (prompt: string, model?: string) => Promise<string>;
         [key: string]: any;
     }
+}
+
+declare module 'qrcode' {
+    export function toDataURL(text: string, options?: any): Promise<string>;
 }

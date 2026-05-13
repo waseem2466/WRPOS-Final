@@ -3,6 +3,7 @@ import { Send, X, Bot, User, BrainCircuit, Zap, Sparkles } from 'lucide-react';
 import { generateAiContent, parseUserIntent, getAIEngine } from '../services/ai';
 import { useAction } from '../context/ActionContext';
 import { db } from '../services/mockDb';
+import { Bill, Product, Customer } from '../types';
 
 interface ChatMessage {
   role: 'user' | 'assistant' | 'system';
@@ -64,17 +65,17 @@ export const GlobalCommander: React.FC = () => {
       const customers = await db.customers.getAll();
       const bills = await db.bills.getAll();
 
-      const lowStock = products.filter(p => p.stock < 5);
-      const debtCustomers = customers.filter(c => (c.balanceDue || 0) > 0);
-      const todayBills = bills.filter(b =>
+      const lowStock = (products as Product[]).filter((p: Product) => p.stock < 5);
+      const debtCustomers = (customers as Customer[]).filter((c: Customer) => (c.balanceDue || 0) > 0);
+      const todayBills = (bills as Bill[]).filter((b: Bill) =>
         b.date.startsWith(new Date().toISOString().split('T')[0])
       );
 
       return {
         stats,
         lowStockCount: lowStock.length,
-        totalDebt: debtCustomers.reduce((sum, c) => sum + (c.balanceDue || 0), 0),
-        todaySales: todayBills.reduce((sum, b) => sum + (b.total || 0), 0),
+        totalDebt: debtCustomers.reduce((sum: number, c: Customer) => sum + (c.balanceDue || 0), 0),
+        todaySales: todayBills.reduce((sum: number, b: Bill) => sum + (b.total || 0), 0),
         totalCustomers: customers.length,
         totalProducts: products.length
       };
@@ -243,6 +244,26 @@ Response:
                 </button>
               ))}
             </div>
+          </div>
+        )}
+
+        {/* Global Stop Button (Only visible when thinking) */}
+        {isThinking && (
+          <div className="absolute top-20 right-6 z-50">
+            <button
+              onClick={() => {
+                setIsThinking(false);
+                setMessages(prev => [...prev, {
+                  role: 'assistant',
+                  content: '🛑 Action stopped by user.',
+                  timestamp: Date.now()
+                }]);
+              }}
+              className="flex items-center gap-2 px-4 py-2 bg-red-500/10 border border-red-500/50 rounded-full text-red-400 text-xs font-bold uppercase tracking-wider hover:bg-red-500/20 transition-all shadow-lg backdrop-blur-md"
+            >
+              <div className="w-2 h-2 bg-red-500 rounded-sm animate-pulse" />
+              Stop Generating
+            </button>
           </div>
         )}
 

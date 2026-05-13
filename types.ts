@@ -2,7 +2,7 @@
 
 export enum MarginType {
   PERCENTAGE = 'PERCENTAGE',
-  FIXED = 'FIXED'
+  MANUAL = 'MANUAL'
 }
 
 export type WarrantyUnit = 'MONTHS' | 'YEARS';
@@ -26,6 +26,23 @@ export interface Product {
   warrantyPrice: number;
   hasWarranty?: boolean;
   description?: string;
+  imageUrl?: string;
+}
+
+export type ProductRequestStatus = 'OPEN' | 'ORDERED' | 'RECEIVED' | 'CANCELLED';
+
+export interface ProductRequest {
+  id: string;
+  itemName: string;
+  quantity: number;
+  customerId?: string | null;
+  customerName?: string;
+  customerPhone?: string;
+  note?: string;
+  status: ProductRequestStatus;
+  createdAt: string;
+  updatedAt?: string;
+  orderedPurchaseOrderId?: string;
 }
 
 export interface Customer {
@@ -106,6 +123,9 @@ export interface BillItem {
   warrantyUnit?: WarrantyUnit;
   warrantyPrice?: number;
   warrantyCost?: number;
+  serialNumber?: string;
+  warrantyStartDate?: string;
+  warrantyEndDate?: string;
   discountType?: 'FIXED' | 'PERCENTAGE';
   discountValue?: number;
 }
@@ -146,6 +166,35 @@ export interface ReturnRecord {
   note: string;
 }
 
+export type WarrantyClaimStatus = 'RECEIVED' | 'SENT_TO_SUPPLIER' | 'REPAIRING' | 'READY' | 'REJECTED' | 'HANDED_OVER';
+export type WarrantyChargeType = 'FREE_WARRANTY' | 'DELIVERY_ONLY' | 'REPAIR_CHARGE' | 'OUT_OF_WARRANTY' | 'REJECTED_CLAIM';
+
+export interface WarrantyClaim {
+  id: string;
+  claimNumber: string;
+  date: string;
+  customerId?: string | null;
+  customerName: string;
+  customerPhone: string;
+  productId?: string | null;
+  productName: string;
+  invoiceNumber?: string;
+  serialNumber?: string;
+  fault: string;
+  status: WarrantyClaimStatus;
+  chargeType: WarrantyChargeType;
+  supplierName?: string;
+  repairCost: number;
+  deliveryCharge: number;
+  inspectionCharge: number;
+  customerCharge: number;
+  paidAmount: number;
+  balanceDue: number;
+  expectedDate?: string;
+  notes?: string;
+  updatedAt?: string;
+}
+
 export interface BusinessSettings {
   id: string;
   businessName: string;
@@ -163,12 +212,14 @@ export interface BusinessSettings {
   smsGatewayGlobalToken?: string;
 }
 
+export type AIProvider = 'auto' | 'gemini' | 'deepseek' | 'ollama-cloud' | 'local-phi' | 'groq' | 'zhipu';
+
 export interface AIConfig {
-  provider: 'gemini' | 'deepseek' | 'ollama-cloud' | 'local-phi';
+  provider: AIProvider;
   model?: string;
 }
 
-export type PurchaseOrderStatus = 'PENDING' | 'RECEIVED' | 'PARTIALLY_RECEIVED' | 'CANCELLED';
+export type PurchaseOrderStatus = 'PENDING' | 'APPROVED' | 'SHIPPED' | 'TRANSIT' | 'DELIVERED' | 'RECEIVED' | 'CANCELLED' | 'PARTIALLY_RECEIVED';
 
 export interface PurchaseOrderItem {
   productId?: string;

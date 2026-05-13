@@ -150,7 +150,7 @@ Input: "${input}"
     private static async safeExecute(prompt: string, context: string, maxTokens: number = 150): Promise<string> {
         try {
             const provider = getAIEngine();
-            return await generateAiContent(prompt, { provider, model: 'phi3' });
+            return await generateAiContent(prompt, { provider });
         } catch (error) {
             const e = error instanceof Error ? error : new Error(String(error));
             errorHandler.log('AI', e, { operation: context }, 'medium');

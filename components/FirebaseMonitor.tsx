@@ -13,6 +13,15 @@ export const FirebaseMonitor: React.FC = () => {
     const [isVisible, setIsVisible] = useState(false);
 
     useEffect(() => {
+        if (!firebaseAuth) {
+            setStatus(prev => ({
+                ...prev,
+                firebase: 'offline',
+                auth: 'guest'
+            }));
+            return;
+        }
+
         // Firebase Auth Listener
         const unsubscribeAuth = onAuthStateChanged(firebaseAuth, (user) => {
             setStatus(prev => ({
@@ -46,6 +55,7 @@ export const FirebaseMonitor: React.FC = () => {
             connecting: 'text-blue-400 bg-blue-400/10 border-blue-400/20 animate-pulse',
             authenticated: 'text-purple-400 bg-purple-400/10 border-purple-400/20',
             guest: 'text-amber-400 bg-amber-400/10 border-amber-400/20',
+            offline: 'text-slate-400 bg-slate-400/10 border-slate-400/20',
             error: 'text-red-400 bg-red-400/10 border-red-400/20'
         };
 

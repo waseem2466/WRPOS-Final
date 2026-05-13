@@ -15,6 +15,7 @@ class ErrorHandler {
   private logs: ErrorLog[] = [];
   private maxLogs: number = 100;
   private listeners: ((log: ErrorLog) => void)[] = [];
+  private recentLogAt: Map<string, number> = new Map();
 
   /**
    * Log an error with full context
@@ -26,6 +27,14 @@ class ErrorHandler {
     severity: 'low' | 'medium' | 'high' | 'critical' = 'medium'
   ): void {
     const errorObj = error instanceof Error ? error : new Error(String(error));
+    const operation = context?.operation ? String(context.operation) : '';
+    const logKey = `${component}:${operation}:${errorObj.message}`;
+    const now = Date.now();
+    const lastSeen = this.recentLogAt.get(logKey) || 0;
+    if (now - lastSeen < 10000) {
+      return;
+    }
+    this.recentLogAt.set(logKey, now);
     
     const logEntry: ErrorLog = {
       timestamp: new Date().toISOString(),

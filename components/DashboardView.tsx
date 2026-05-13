@@ -26,15 +26,15 @@ export const Dashboard: React.FC = () => {
       setBills(allBills);
 
       const today = new Date().toISOString().split('T')[0];
-      const todayBills = allBills.filter(b => b.date.startsWith(today));
+      const todayBills = (allBills as Bill[]).filter((b: Bill) => b.date.startsWith(today));
 
-      const totalPending = customers.reduce((sum, c) => sum + (c.balanceDue || 0), 0);
+      const totalPending = (customers as any[]).reduce((sum: number, c: any) => sum + (c.balanceDue || 0), 0);
 
       setStats({
-        todaySales: todayBills.reduce((sum, b) => sum + (b.total || 0), 0),
-        monthSales: allBills.reduce((sum, b) => sum + (b.total || 0), 0),
-        todayProfit: todayBills.reduce((sum, b) => sum + (b.totalProfit || 0), 0),
-        totalProfit: allBills.reduce((sum, b) => sum + (b.totalProfit || 0), 0),
+        todaySales: (todayBills as Bill[]).reduce((sum: number, b: Bill) => sum + (b.total || 0), 0),
+        monthSales: (allBills as Bill[]).reduce((sum: number, b: Bill) => sum + (b.total || 0), 0),
+        todayProfit: (todayBills as Bill[]).reduce((sum: number, b: Bill) => sum + (b.totalProfit || 0), 0),
+        totalProfit: (allBills as Bill[]).reduce((sum: number, b: Bill) => sum + (b.totalProfit || 0), 0),
         pendingLoans: totalPending
       });
     };

@@ -246,7 +246,7 @@ export default async function handler(req: Request, res: Response) {
             await client.query(
               `INSERT INTO "BillItem" (id, bill_id, product_id, name, sku, quantity, cost, price, profit, warranty, warranty_years, warranty_unit, warranty_price, warranty_cost, discount_type, discount_value, returned_quantity)
                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
-              [i.id, bill.id, productId, i.name, i.sku, i.quantity, i.cost, i.price, i.profit, i.warranty, i.warrantyYears, i.warrantyUnit, i.warrantyPrice, i.warrantyCost, 'FIXED', 0, i.returnedQuantity]
+              [i.id, bill.id, productId, i.name, i.sku, i.quantity, i.cost, i.price, i.profit, i.warranty, i.warrantyYears, i.warrantyUnit, i.warrantyPrice, i.warrantyCost, 'MANUAL', 0, i.returnedQuantity]
             );
 
             // Stock decrement for real products

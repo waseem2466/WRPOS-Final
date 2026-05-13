@@ -8,15 +8,15 @@ interface GlassInputProps extends React.InputHTMLAttributes<HTMLInputElement> {
 export const GlassInput = forwardRef<HTMLInputElement, GlassInputProps>(
   ({ label, className = '', ...props }, ref) => {
     return (
-      <div className={`flex flex-col gap-2 ${className}`}>
+      <div className="flex flex-col gap-2 w-full">
         {label && (
-          <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">
+          <label className="text-[10px] font-extrabold text-slate-400 uppercase tracking-[0.2em] ml-1">
             {label}
           </label>
         )}
         <input
           ref={ref}
-          className="glass-input rounded-2xl px-5 py-3 text-sm font-semibold placeholder-slate-700 w-full"
+          className={`glass-input rounded-[1.25rem] px-5 py-3.5 text-sm font-bold placeholder-slate-600 w-full ${className}`}
           {...props}
         />
       </div>

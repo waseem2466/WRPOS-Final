@@ -1,6 +1,6 @@
 import { pool } from './db';
 import { encryptData, decryptData } from './encryption';
-import { Product, Customer, Bill, MarginType, Payment, BusinessSettings, Supplier, PurchaseOrder, Expense, MonthlySummary, BillItem, ReturnRecord, SupplierPayment, PurchaseOrderItem, PurchaseOrderStatus } from '../types';
+import { Product, Customer, Bill, MarginType, Payment, BusinessSettings, Supplier, PurchaseOrder, Expense, MonthlySummary, BillItem, ReturnRecord, SupplierPayment, PurchaseOrderItem, PurchaseOrderStatus, ProductRequest } from '../types';
 import { errorHandler } from './errorHandler';
 import { cloudDb } from './cloudDb';
 import { neonHttp } from './neonHttp';
@@ -39,7 +39,7 @@ const mapProduct = (row: any): Product => ({
   cost: toNum(row.cost),
   transportCost: toNum(row.transportCost),
   totalCost: toNum(row.cost) + toNum(row.transportCost),
-  marginType: (row.marginType || MarginType.FIXED) as MarginType,
+  marginType: (row.marginType || MarginType.MANUAL) as MarginType,
   marginValue: toNum(row.marginValue),
   price: toNum(row.price),
   stock: toNum(row.stock),
@@ -124,6 +124,20 @@ const mapSupplier = (row: any): Supplier => ({
   bankName: row.bankName || '',
   accountNumber: row.accountNumber || '',
   branch: row.branch || ''
+});
+
+const mapProductRequest = (row: any): ProductRequest => ({
+  id: String(row.id),
+  itemName: String(row.itemName || ''),
+  quantity: toNum(row.quantity) || 1,
+  customerId: row.customerId || null,
+  customerName: row.customerName || '',
+  customerPhone: row.customerPhone || '',
+  note: row.note || '',
+  status: row.status || 'OPEN',
+  createdAt: row.createdAt ? new Date(row.createdAt).toISOString() : new Date().toISOString(),
+  updatedAt: row.updatedAt ? new Date(row.updatedAt).toISOString() : undefined,
+  orderedPurchaseOrderId: row.orderedPurchaseOrderId || undefined
 });
 
 const mapPayment = (row: any): Payment => ({
@@ -216,9 +230,141 @@ interface DbCache {
   purchaseOrders: PurchaseOrder[];
   payments: Payment[];
   supplierPayments: SupplierPayment[];
+  productRequests: ProductRequest[];
   returns: ReturnRecord[];
   summaries: MonthlySummary[];
 }
+
+export interface DB {
+  setAuthToken: (token: string) => void;
+  init: () => Promise<boolean>;
+  isOffline: () => boolean;
+  setOffline: (status: boolean) => void;
+  system: {
+    syncPending: () => Promise<void>;
+    getBackupData: () => Promise<{ meta: { date: string; version: string }; data: DbCache }>;
+    restoreBackupData: (json: any) => Promise<void>;
+  };
+  getTableStats: () => Promise<{ product: number; customer: number; bill: number; expense: number }>;
+  executeRaw: (q: string) => Promise<any[]>;
+  settings: {
+    get: () => Promise<BusinessSettings>;
+    update: (s: BusinessSettings) => Promise<void>;
+  };
+  products: {
+    getAll: () => Promise<Product[]>;
+    get: (id: string) => Promise<Product | undefined>;
+    add: (p: Partial<Product>) => Promise<string>;
+    update: (p: Product) => Promise<void>;
+    delete: (id: string) => Promise<void>;
+  };
+  productRequests: {
+    getAll: () => Promise<ProductRequest[]>;
+    getOpen: () => Promise<ProductRequest[]>;
+    add: (request: Partial<ProductRequest>) => Promise<string>;
+    update: (request: ProductRequest) => Promise<void>;
+    markOrdered: (ids: string[], purchaseOrderId?: string) => Promise<void>;
+    delete: (id: string) => Promise<void>;
+  };
+  customers: {
+    getAll: () => Promise<Customer[]>;
+    get: (id: string) => Promise<Customer | undefined>;
+    add: (c: Partial<Customer>) => Promise<string>;
+    create: (c: Partial<Customer>) => Promise<string>;
+    update: (c: Customer) => Promise<void>;
+    delete: (id: string) => Promise<void>;
+    recalculateBalance: (id: string) => Promise<{ balance: number; totalPaid: number }>;
+  };
+  bills: {
+    getAll: (archived?: boolean) => Promise<Bill[]>;
+    getAllForCustomer: (cid: string) => Promise<Bill[]>;
+    getByInvoiceNumber: (inv: string) => Promise<Bill | null>;
+    create: (bill: Bill) => Promise<string>;
+    returnItem: (billId: string, lineId: string, qty: number) => Promise<void>;
+    returnUnlinkedItem: (productId: string, qty: number, price: number, cost: number, paymentType: string, customerId?: string) => Promise<void>;
+  };
+  expenses: {
+    getAll: () => Promise<Expense[]>;
+    add: (e: Partial<Expense>) => Promise<string>;
+    update: (e: Expense) => Promise<void>;
+    delete: (id: string) => Promise<void>;
+  };
+  reminders: {
+    getOverdueBills: () => Promise<any[]>;
+  };
+  suppliers: {
+    getAll: () => Promise<Supplier[]>;
+    add: (s: Partial<Supplier>) => Promise<string>;
+    update: (s: Supplier) => Promise<void>;
+    delete: (id: string) => Promise<void>;
+  };
+  purchaseOrders: {
+    getAll: () => Promise<PurchaseOrder[]>;
+    add: (po: Partial<PurchaseOrder>) => Promise<string>;
+    update: (po: PurchaseOrder) => Promise<void>;
+    delete: (id: string) => Promise<void>;
+  };
+  payments: {
+    getAll: () => Promise<Payment[]>;
+    getByCustomerId: (cid: string) => Promise<Payment[]>;
+    add: (p: Partial<Payment>) => Promise<string>;
+    update: (id: string, cid: string, oldAmount: number, newAmount: number, note: string) => Promise<void>;
+    delete: (id: string, cid: string, amount: number) => Promise<void>;
+  };
+  supplierPayments: {
+    getAll: () => Promise<SupplierPayment[]>;
+    getBySupplierId: (sid: string) => Promise<SupplierPayment[]>;
+    add: (p: Partial<SupplierPayment>) => Promise<string>;
+    update: (id: string, oldAmount: number, newAmount: number, note: string, method: string, poId?: string) => Promise<void>;
+    delete: (id: string) => Promise<void>;
+    updateStatus: (id: string, status: string) => Promise<void>;
+  };
+  returns: {
+    getAll: () => Promise<ReturnRecord[]>;
+  };
+  summaries: {
+    getAll: () => Promise<MonthlySummary[]>;
+    add: (s: MonthlySummary) => Promise<void>;
+    getArchivedBills: (id: string) => Promise<Bill[]>;
+    getArchivedExpenses: (id: string) => Promise<Expense[]>;
+  };
+}
+
+const safeArray = <T>(value: any): T[] => Array.isArray(value) ? value : [];
+const safeObject = <T>(value: any, defaultValue: T): T => (value && typeof value === 'object' && !Array.isArray(value)) ? value : defaultValue;
+
+const sanitizeDbCache = (input: Partial<DbCache>): DbCache => ({
+  products: safeArray<Product>(input.products),
+  customers: safeArray<Customer>(input.customers),
+  bills: safeArray<Bill>(input.bills),
+  settings: safeObject<BusinessSettings | null>(input.settings, null),
+  expenses: safeArray<Expense>(input.expenses),
+  suppliers: safeArray<Supplier>(input.suppliers),
+  purchaseOrders: safeArray<PurchaseOrder>(input.purchaseOrders),
+  payments: safeArray<Payment>(input.payments),
+  supplierPayments: safeArray<SupplierPayment>(input.supplierPayments),
+  productRequests: safeArray<ProductRequest>(input.productRequests),
+  returns: safeArray<ReturnRecord>(input.returns),
+  summaries: safeArray<MonthlySummary>(input.summaries),
+});
+
+const isInventoryTrackedProduct = (productId?: string | null) => {
+  if (!productId) return false;
+  return !productId.startsWith('CUSTOM') && !productId.startsWith('SERVICE') && !productId.startsWith('manual-');
+};
+
+const applyLocalStockDelta = (productId: string, delta: number) => {
+  const productIndex = dbCache.products.findIndex((product: any) => String(product.id) === String(productId));
+  if (productIndex === -1) return;
+
+  const current = dbCache.products[productIndex];
+  const nextProducts = [...dbCache.products];
+  nextProducts[productIndex] = {
+    ...current,
+    stock: toNum(current.stock) + delta,
+  };
+  dbCache.products = nextProducts;
+};
 
 let dbCache: DbCache = {
   products: [],
@@ -230,11 +376,19 @@ let dbCache: DbCache = {
   purchaseOrders: [],
   payments: [],
   supplierPayments: [],
+  productRequests: [],
   returns: [],
   summaries: []
 };
 
 let isOfflineMode = false;
+const isCapacitorRuntime = () => !!(window as any).Capacitor?.isNativePlatform?.();
+const isDesktopRuntime = () => !!(window as any).electronAPI;
+const canUseRestFallback = () => !isDesktopRuntime() && isCapacitorRuntime() && neonHttp.isUsable();
+const isTransientDbError = (error: unknown) => {
+  const message = error instanceof Error ? error.message : String(error);
+  return /timeout|terminated|ENOTFOUND|ECONNRESET|ECONNREFUSED|network/i.test(message);
+};
 
 const SyncEngine = {
   loadLocal: () => {
@@ -245,7 +399,7 @@ const SyncEngine = {
         if (decryptedData) {
           try {
             const parsed = JSON.parse(decryptedData) as Partial<DbCache>;
-            dbCache = { ...dbCache, ...parsed };
+            dbCache = { ...dbCache, ...sanitizeDbCache(parsed) };
           } catch (jsonErr) {
             if (decryptedData.includes('[object Object]')) {
               console.warn('[SyncEngine] Defect detected: "[object Object]" found in neural cache. Cleaning...');
@@ -256,7 +410,7 @@ const SyncEngine = {
         } else {
           // Fallback for legacy unencrypted data during transition
           const parsed = JSON.parse(saved) as Partial<DbCache>;
-          dbCache = { ...dbCache, ...parsed };
+          dbCache = { ...dbCache, ...sanitizeDbCache(parsed) };
         }
       }
     } catch (e) {
@@ -272,6 +426,7 @@ const SyncEngine = {
       const serialized = JSON.stringify(dbCache);
       const encrypted = encryptData(serialized);
       localStorage.setItem(LOCAL_KEYS.DATA, encrypted);
+      console.log('[SyncEngine] Local cache saved.');
     } catch (e) {
       errorHandler.log('SyncEngine', e, { operation: 'saveLocal' }, 'high');
     }
@@ -300,7 +455,8 @@ const SyncEngine = {
   processQueue: async () => {
     if (isOfflineMode) return;
     try {
-      const queue = JSON.parse(localStorage.getItem(LOCAL_KEYS.SYNC_QUEUE) || '[]');
+      const rawQueue = JSON.parse(localStorage.getItem(LOCAL_KEYS.SYNC_QUEUE) || '[]');
+      const queue = Array.isArray(rawQueue) ? rawQueue : [];
       if (queue.length === 0) return;
 
       const newQueue = [];
@@ -308,6 +464,12 @@ const SyncEngine = {
         try {
           await executeCloudOperation(item.action, item.payload);
         } catch (e) {
+          if (isTransientDbError(e)) {
+            console.warn('[SyncEngine] Database temporarily unavailable. Keeping pending sync queue for later.');
+            isOfflineMode = true;
+            newQueue.push(item, ...queue.slice(queue.indexOf(item) + 1));
+            break;
+          }
           errorHandler.log('SyncEngine', e, { operation: 'processQueueItem', action: item.action }, 'medium');
           newQueue.push(item);
         }
@@ -323,7 +485,7 @@ const SyncEngine = {
     try {
       const fetchEntities = async () => {
         try {
-          const [p, c, s, e, po, pay, ret, sum, sup] = await Promise.all([
+          const [p, c, s, e, po, pay, ret, sum, sup, req] = await Promise.all([
             pool.query(`SELECT * FROM "Product" ORDER BY name ASC`),
             pool.query(`SELECT * FROM "Customer" ORDER BY name ASC`),
             pool.query(`SELECT * FROM "Settings" WHERE id = 'main'`),
@@ -332,22 +494,35 @@ const SyncEngine = {
             pool.query(`SELECT * FROM "Payment" ORDER BY created_at DESC LIMIT 100`),
             pool.query(`SELECT * FROM "ReturnRecord" ORDER BY created_at DESC LIMIT 100`),
             pool.query(`SELECT * FROM "MonthlySummary" ORDER BY year DESC, month DESC`),
-            pool.query(`SELECT * FROM "Supplier" ORDER BY name ASC`)
+            pool.query(`SELECT * FROM "Supplier" ORDER BY name ASC`),
+            pool.query(`SELECT * FROM "ProductRequest" ORDER BY created_at DESC LIMIT 500`)
           ]);
 
-          dbCache.products = p.rows.map((r: any) => mapProduct(toCamel(r)));
-          dbCache.customers = c.rows.map((r: any) => mapCustomer(toCamel(r)));
-          if (s.rows[0]) dbCache.settings = mapSettings(toCamel(s.rows[0]));
-          dbCache.expenses = e.rows.map((r: any) => mapExpense(toCamel(r)));
-          dbCache.purchaseOrders = po.rows.map((r: any) => mapPurchaseOrder(toCamel(r)));
-          dbCache.payments = pay.rows.map((r: any) => mapPayment(toCamel(r)));
-          dbCache.returns = ret.rows.map((r: any) => mapReturnRecord(toCamel(r)));
-          dbCache.summaries = sum.rows.map((r: any) => mapMonthlySummary(toCamel(r)));
-          dbCache.suppliers = sup.rows.map((r: any) => mapSupplier(toCamel(r)));
+          dbCache.products = (p?.rows || []).map((r: any) => mapProduct(toCamel(r)));
+          dbCache.customers = (c?.rows || []).map((r: any) => mapCustomer(toCamel(r)));
+          if (s?.rows?.[0]) dbCache.settings = mapSettings(toCamel(s.rows[0]));
+          dbCache.expenses = (e?.rows || []).map((r: any) => mapExpense(toCamel(r)));
+          dbCache.purchaseOrders = (po?.rows || []).map((r: any) => mapPurchaseOrder(toCamel(r)));
+          dbCache.payments = (pay?.rows || []).map((r: any) => mapPayment(toCamel(r)));
+          dbCache.returns = (ret?.rows || []).map((r: any) => mapReturnRecord(toCamel(r)));
+          dbCache.summaries = (sum?.rows || []).map((r: any) => mapMonthlySummary(toCamel(r)));
+          dbCache.suppliers = (sup?.rows || []).map((r: any) => mapSupplier(toCamel(r)));
+          dbCache.productRequests = (req?.rows || []).map((r: any) => mapProductRequest(toCamel(r)));
 
           SyncEngine.saveLocal();
         } catch (err) {
-          errorHandler.log('SyncEngine', err, { operation: 'fetchEntities' }, 'high');
+          if (isTransientDbError(err)) {
+            console.warn('[SyncEngine] Cloud sync temporarily unavailable. Continuing in Offline Mode.');
+          } else {
+            errorHandler.log('SyncEngine', err, { operation: 'fetchEntities' }, 'high');
+          }
+
+          // Mobile Fallback: Attempt fetch via REST if pool fails
+          if (canUseRestFallback()) {
+            console.log('[SyncEngine] Pool failed on mobile, attempting REST discovery...');
+            // TODO: Implement full REST fetch if needed, for now we rely on local + individual syncs
+          }
+
           isOfflineMode = true;
         }
       };
@@ -360,6 +535,13 @@ const SyncEngine = {
 };
 
 const executeCloudOperation = async (action: string, payload: any) => {
+  // Mobile fallback only: desktop builds should stay on the Electron/Postgres path.
+  if (canUseRestFallback()) {
+    console.log(`[mockDb] Mobile detected, using REST sync for ${action}`);
+    await neonHttp.syncAction(action, payload);
+    return;
+  }
+
   const client = await pool.connect();
   try {
     switch (action) {
@@ -378,7 +560,7 @@ const executeCloudOperation = async (action: string, payload: any) => {
             `INSERT INTO "BillItem" (id, bill_id, product_id, name, sku, quantity, cost, price, profit, warranty, warranty_years, warranty_unit, warranty_price, warranty_cost, discount_type, discount_value, returned_quantity)
                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
                 ON CONFLICT (id) DO NOTHING`,
-            [generateId(), bill.id, productId, i.name, i.sku, i.quantity, i.cost, i.price, i.profit, i.warranty, i.warrantyYears, i.warrantyUnit, i.warrantyPrice, i.warrantyCost, 'FIXED', 0, 0]
+            [generateId(), bill.id, productId, i.name, i.sku, i.quantity, i.cost, i.price, i.profit, i.warranty, i.warrantyYears, i.warrantyUnit, i.warrantyPrice, i.warrantyCost, 'MANUAL', 0, 0]
           );
           if (productId) {
             await client.query(`UPDATE "Product" SET stock = stock - $1 WHERE id = $2`, [i.quantity, productId]);
@@ -386,8 +568,16 @@ const executeCloudOperation = async (action: string, payload: any) => {
         }
         if (bill.customerId) {
           const balanceChange = bill.total - (bill.cashReceived || 0);
-          if (balanceChange > 0) {
-            await client.query(`UPDATE "Customer" SET balance = balance + $1, total_loan = total_loan + $1 WHERE id = $2`, [balanceChange, bill.customerId]);
+          const cashReceived = bill.cashReceived || 0;
+          if (balanceChange > 0 || cashReceived > 0) {
+            // Update balance and loan when there's outstanding amount
+            if (balanceChange > 0) {
+              await client.query(`UPDATE "Customer" SET balance = balance + $1, total_loan = total_loan + $1 WHERE id = $2`, [balanceChange, bill.customerId]);
+            }
+            // Update total_paid when there's partial payment
+            if (cashReceived > 0) {
+              await client.query(`UPDATE "Customer" SET total_paid = total_paid + $1 WHERE id = $2`, [cashReceived, bill.customerId]);
+            }
           }
         }
         await client.query('COMMIT');
@@ -399,7 +589,13 @@ const executeCloudOperation = async (action: string, payload: any) => {
 
       case 'ADD_CUSTOMER':
         await client.query(
-          `INSERT INTO "Customer" (id, name, phone, nic, address, total_loan, total_paid, balance, language) VALUES ($1, $2, $3, $4, $5, 0, 0, 0, $6) ON CONFLICT (id) DO NOTHING`,
+          `INSERT INTO "Customer" (id, name, phone, nic, address, total_loan, total_paid, balance, language)
+             VALUES ($1, $2, $3, $4, $5, 0, 0, 0, $6)
+             ON CONFLICT (phone) DO UPDATE SET
+               name=COALESCE(NULLIF(EXCLUDED.name, ''), "Customer".name),
+               nic=COALESCE(NULLIF(EXCLUDED.nic, ''), "Customer".nic),
+               address=COALESCE(NULLIF(EXCLUDED.address, ''), "Customer".address),
+               language=COALESCE(EXCLUDED.language, "Customer".language)`,
           [payload.id, payload.name, payload.phone, payload.nic, payload.address, payload.language || 'en']
         );
         if (payload.id) await cloudDb.syncToCloud('customers', payload.id, payload);
@@ -419,13 +615,40 @@ const executeCloudOperation = async (action: string, payload: any) => {
         await neonHttp.syncAction('ADD_PRODUCT', p);
         break;
 
+      case 'ADD_PRODUCT_REQUEST':
+        const req = payload;
+        await client.query(
+          `INSERT INTO "ProductRequest" (id, item_name, quantity, customer_id, customer_name, customer_phone, note, status, ordered_purchase_order_id, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, COALESCE($10::timestamp, NOW()), NOW())
+             ON CONFLICT (id) DO UPDATE SET
+               item_name=$2,
+               quantity=$3,
+               customer_id=$4,
+               customer_name=$5,
+               customer_phone=$6,
+               note=$7,
+               status=$8,
+               ordered_purchase_order_id=$9,
+               updated_at=NOW()`,
+          [req.id, req.itemName, req.quantity, req.customerId || null, req.customerName || '', req.customerPhone || '', req.note || '', req.status || 'OPEN', req.orderedPurchaseOrderId || null, req.createdAt]
+        );
+        if (req.id) await cloudDb.syncToCloud('productRequests', req.id, req);
+        await neonHttp.syncAction('ADD_PRODUCT_REQUEST', req);
+        break;
+
       case 'ADD_CUSTOMER_FULL':
         const cust = payload;
         await client.query(
           `INSERT INTO "Customer" (id, name, phone, nic, address, total_loan, total_paid, balance, language) 
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) 
-             ON CONFLICT (id) DO UPDATE SET
-               name=$2, phone=$3, nic=$4, address=$5, total_loan=$6, total_paid=$7, balance=$8, language=$9`,
+             ON CONFLICT (phone) DO UPDATE SET
+               name=$2,
+               nic=$4,
+               address=$5,
+               total_loan=GREATEST("Customer".total_loan, $6),
+               total_paid=GREATEST("Customer".total_paid, $7),
+               balance=GREATEST("Customer".balance, $8),
+               language=$9`,
           [cust.id, cust.name, cust.phone, cust.nic, cust.address, cust.totalLoan, cust.totalPaid, cust.balanceDue, cust.language || 'en']
         );
         if (cust.id) await cloudDb.syncToCloud('customers', cust.id, cust);
@@ -443,7 +666,7 @@ const executeCloudOperation = async (action: string, payload: any) => {
           `INSERT INTO "Payment" (id, customer_id, amount, date, note) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (id) DO NOTHING`,
           [payload.id, payload.customerId, payload.amount, payload.date, payload.note]
         );
-        await client.query(`UPDATE "Customer" SET balance = balance - $1, total_paid = total_paid + $1, total_loan = GREATEST(0, total_loan - $1) WHERE id=$2`, [payload.amount, payload.customerId]);
+        await client.query(`UPDATE "Customer" SET balance = GREATEST(0, balance - $1), total_paid = total_paid + $1, total_loan = GREATEST(0, total_loan - $1) WHERE id=$2`, [payload.amount, payload.customerId]);
         if (payload.id) await cloudDb.syncToCloud('payments', payload.id, payload);
         await neonHttp.syncAction('ADD_PAYMENT', payload);
         break;
@@ -460,8 +683,21 @@ const executeCloudOperation = async (action: string, payload: any) => {
       case 'ADD_PURCHASE_ORDER':
         await client.query(
           `INSERT INTO "PurchaseOrder" (id, supplier_id, supplier_name, date, items, total_cost, paid_amount, discount_amount, payment_method, status, transport_cost, transport_paid_external)
-             VALUES ($1, $2, $3, NOW(), $4, $5, $6, 0, $7, $8, $9, $10) ON CONFLICT (id) DO NOTHING`,
-          [payload.id, payload.supplierId, payload.supplierName, JSON.stringify(payload.items), payload.totalCost, payload.paidAmount, payload.paymentMethod, payload.status, payload.transportCost, payload.transportPaidExternal]
+             VALUES ($1, $2, $3, COALESCE($11::timestamp, NOW()), $4, $5, $6, COALESCE($12, 0), $7, $8, $9, $10)
+             ON CONFLICT (id) DO UPDATE SET
+               supplier_id=$2,
+               supplier_name=$3,
+               items=$4,
+               total_cost=$5,
+               paid_amount=$6,
+               payment_method=$7,
+               status=$8,
+               transport_cost=$9,
+               transport_paid_external=$10,
+               date=COALESCE($11::timestamp, "PurchaseOrder".date),
+               discount_amount=COALESCE($12, "PurchaseOrder".discount_amount),
+               updated_at=NOW()`,
+          [payload.id, payload.supplierId, payload.supplierName, JSON.stringify(payload.items), payload.totalCost, payload.paidAmount, payload.paymentMethod, payload.status, payload.transportCost, payload.transportPaidExternal, payload.date, payload.discountAmount || 0]
         );
         if (payload.id) await cloudDb.syncToCloud('purchaseOrders', payload.id, payload);
         await neonHttp.syncAction('ADD_PURCHASE_ORDER', payload);
@@ -493,16 +729,49 @@ const executeCloudOperation = async (action: string, payload: any) => {
         await neonHttp.syncAction('ADD_SUPPLIER', s);
         break;
 
+      case 'UNLINKED_RETURN':
+        const { unlinkedQty, unlinkedItemDetails, unlinkedBillDetails } = payload;
+        await client.query('BEGIN');
+
+        if (unlinkedItemDetails.productId && !unlinkedItemDetails.productId.startsWith('CUSTOM') && !unlinkedItemDetails.productId.startsWith('SERVICE')) {
+          await client.query(`UPDATE "Product" SET stock = stock + $1 WHERE id = $2`, [unlinkedQty, unlinkedItemDetails.productId]);
+        }
+
+        const unlinkedRefundVal = unlinkedItemDetails.price * unlinkedQty;
+        const unlinkedRefundCost = unlinkedItemDetails.cost * unlinkedQty;
+        const unlinkedRefundProfit = unlinkedItemDetails.profit * unlinkedQty; // Profit is usually per item here
+
+        const unlinkedReturnId = 'RET-UNL-' + Date.now();
+        await client.query(
+          `INSERT INTO "ReturnRecord" (id, bill_id, product_id, quantity, refund_value, refund_cost, refund_profit, payment_type, customer_id, date, note)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), $10)`,
+          [unlinkedReturnId, 'UNLINKED', unlinkedItemDetails.productId, unlinkedQty, unlinkedRefundVal, unlinkedRefundCost, unlinkedRefundProfit, unlinkedBillDetails.paymentType || 'CASH', unlinkedBillDetails.customerId, 'Unlinked return to stock']
+        );
+        await client.query('COMMIT');
+
+        await cloudDb.syncToCloud('returns', unlinkedReturnId, { qty: unlinkedQty, itemDetails: unlinkedItemDetails, billDetails: unlinkedBillDetails, returnId: unlinkedReturnId, unlinked: true });
+        await neonHttp.syncAction('UNLINKED_RETURN', { unlinkedQty, unlinkedItemDetails, unlinkedBillDetails, returnId: unlinkedReturnId });
+        break;
+
       case 'RETURN_ITEM':
         const { billId, lineId, qty, itemDetails, billDetails } = payload;
         await client.query('BEGIN');
-        await client.query(`UPDATE "BillItem" SET returned_quantity = returned_quantity + $1 WHERE id = $2`, [qty, lineId]);
+        const returnUpdate = await client.query(
+          `UPDATE "BillItem"
+             SET returned_quantity = returned_quantity + $1
+           WHERE id = $2
+             AND (returned_quantity + $1) <= quantity`,
+          [qty, lineId]
+        );
+        if (!returnUpdate.rowCount) {
+          throw new Error('Return quantity exceeds the remaining quantity for this item.');
+        }
         if (itemDetails.productId && !itemDetails.productId.startsWith('CUSTOM') && !itemDetails.productId.startsWith('SERVICE')) {
           await client.query(`UPDATE "Product" SET stock = stock + $1 WHERE id = $2`, [qty, itemDetails.productId]);
         }
         const refundVal = itemDetails.price * qty;
         const refundCost = itemDetails.cost * qty;
-        const refundProfit = (itemDetails.profit / itemDetails.quantity) * qty;
+        const refundProfit = (itemDetails.profit / Math.max(1, itemDetails.quantity)) * qty;
         const returnId = 'RET-' + Date.now();
         await client.query(
           `INSERT INTO "ReturnRecord" (id, bill_id, product_id, quantity, refund_value, refund_cost, refund_profit, payment_type, customer_id, date, note)
@@ -540,26 +809,47 @@ const executeCloudOperation = async (action: string, payload: any) => {
 
 SyncEngine.loadLocal();
 
-export const db = {
+export const db: DB = {
   setAuthToken: (t: string) => { },
 
   init: async () => {
     try {
+      // Platform detection
+      const isCap = isCapacitorRuntime();
+      const electron = isDesktopRuntime();
+
+      if (!electron && isCap && neonHttp.isUsable()) {
+        console.log('[db] Native platform detected, checking REST connectivity...');
+        const res = await neonHttp.query('SELECT 1');
+        if (res && !res.error) {
+          isOfflineMode = false;
+          console.log('[db] REST connectivity confirmed.');
+          return true;
+        }
+        throw new Error('REST check failed');
+      }
+
       const client = await pool.connect();
       await client.query('SELECT NOW()');
       client.release();
       isOfflineMode = false;
-      SyncEngine.syncAll();
-      SyncEngine.processQueue();
+      await SyncEngine.processQueue();
+      await SyncEngine.syncAll();
       return true;
     } catch (e) {
+      console.warn('[db] Connectivity check failed, starting in Offline Mode:', e);
       isOfflineMode = true;
       return true;
     }
   },
 
   isOffline: () => isOfflineMode,
-  setOffline: (status: boolean) => { isOfflineMode = status; if (!status) { SyncEngine.syncAll(); SyncEngine.processQueue(); } },
+  setOffline: (status: boolean) => {
+    isOfflineMode = status;
+    if (!status) {
+      SyncEngine.processQueue().then(() => SyncEngine.syncAll());
+    }
+  },
 
   system: {
     syncPending: async () => SyncEngine.processQueue(),
@@ -605,7 +895,17 @@ export const db = {
           isOfflineMode = true;
         });
       }
-      return dbCache.settings || { id: 'main', businessName: 'WR POS', contactPhone: '', address: '', currency: 'LKR' };
+      return dbCache.settings || {
+        id: 'main',
+        businessName: 'WR Smile & Supplies',
+        contactPhone: '0779336848, 0719336848',
+        address: '411/7 Mullipothana 96, Kantale',
+        currency: 'LKR',
+        logoUrl: '',
+        receiptNote: 'Multi-item returns accepted within 3 days. Please keep your receipt! Thank you!',
+        returnDaysLimit: 3,
+        returnConditions: 'Multi-item returns accepted with receipt within 3 days.'
+      };
     },
     update: async (s: BusinessSettings) => {
       dbCache.settings = s;
@@ -622,6 +922,9 @@ export const db = {
     getAll: async (): Promise<Product[]> => {
       return [...dbCache.products];
     },
+    get: async (id: string): Promise<Product | undefined> => {
+      return dbCache.products.find((p: Product) => p.id === id);
+    },
     add: async (p: Partial<Product>) => {
       const id = p.id || generateId();
       const product = { ...p, id } as Product;
@@ -637,7 +940,7 @@ export const db = {
       return id;
     },
     update: async (p: Product) => {
-      const idx = dbCache.products.findIndex((x: any) => x.id === p.id);
+      const idx = dbCache.products.findIndex((x: Product) => x.id === p.id);
       if (idx > -1) {
         const newProducts = [...dbCache.products];
         newProducts[idx] = p;
@@ -652,15 +955,85 @@ export const db = {
       }
     },
     delete: async (id: string) => {
-      dbCache.products = dbCache.products.filter((p: any) => p.id !== id);
+      dbCache.products = dbCache.products.filter((p: Product) => p.id !== id);
       SyncEngine.saveLocal();
       if (!isOfflineMode) try { await pool.query(`DELETE FROM "Product" WHERE id=$1`, [id]); } catch (e) { }
+    }
+  },
+
+  productRequests: {
+    getAll: async () => [...dbCache.productRequests],
+    getOpen: async () => dbCache.productRequests.filter((r: ProductRequest) => r.status === 'OPEN'),
+    add: async (request: Partial<ProductRequest>) => {
+      const now = new Date().toISOString();
+      const req: ProductRequest = {
+        id: request.id || generateId(),
+        itemName: String(request.itemName || '').trim(),
+        quantity: Number(request.quantity || 1),
+        customerId: request.customerId || null,
+        customerName: request.customerName || '',
+        customerPhone: request.customerPhone || '',
+        note: request.note || '',
+        status: request.status || 'OPEN',
+        createdAt: request.createdAt || now,
+        updatedAt: now,
+        orderedPurchaseOrderId: request.orderedPurchaseOrderId
+      };
+      if (!req.itemName) throw new Error('Requested item name is required.');
+      dbCache.productRequests = [req, ...dbCache.productRequests];
+      SyncEngine.saveLocal();
+      if (!isOfflineMode) {
+        SyncEngine.addToQueue('ADD_PRODUCT_REQUEST', req);
+        SyncEngine.processQueue();
+      } else {
+        SyncEngine.addToQueue('ADD_PRODUCT_REQUEST', req);
+      }
+      return req.id;
+    },
+    update: async (request: ProductRequest) => {
+      const idx = dbCache.productRequests.findIndex((r: ProductRequest) => r.id === request.id);
+      const updated = { ...request, updatedAt: new Date().toISOString() };
+      if (idx > -1) {
+        const next = [...dbCache.productRequests];
+        next[idx] = updated;
+        dbCache.productRequests = next;
+      } else {
+        dbCache.productRequests = [updated, ...dbCache.productRequests];
+      }
+      SyncEngine.saveLocal();
+      if (!isOfflineMode) {
+        SyncEngine.addToQueue('ADD_PRODUCT_REQUEST', updated);
+        SyncEngine.processQueue();
+      } else {
+        SyncEngine.addToQueue('ADD_PRODUCT_REQUEST', updated);
+      }
+    },
+    markOrdered: async (ids: string[], purchaseOrderId?: string) => {
+      const idSet = new Set(ids);
+      const changed: ProductRequest[] = [];
+      dbCache.productRequests = dbCache.productRequests.map((req: ProductRequest) => {
+        if (!idSet.has(req.id)) return req;
+        const updated = { ...req, status: 'ORDERED' as const, orderedPurchaseOrderId: purchaseOrderId, updatedAt: new Date().toISOString() };
+        changed.push(updated);
+        return updated;
+      });
+      SyncEngine.saveLocal();
+      changed.forEach(req => SyncEngine.addToQueue('ADD_PRODUCT_REQUEST', req));
+      if (!isOfflineMode) SyncEngine.processQueue();
+    },
+    delete: async (id: string) => {
+      dbCache.productRequests = dbCache.productRequests.filter((r: ProductRequest) => r.id !== id);
+      SyncEngine.saveLocal();
+      if (!isOfflineMode) try { await pool.query(`DELETE FROM "ProductRequest" WHERE id=$1`, [id]); } catch (e) { }
     }
   },
 
   customers: {
     getAll: async () => {
       return [...dbCache.customers];
+    },
+    get: async (id: string): Promise<Customer | undefined> => {
+      return dbCache.customers.find((c: Customer) => c.id === id);
     },
     add: async (c: Partial<Customer>) => {
       const id = c.id || generateId();
@@ -700,7 +1073,7 @@ export const db = {
       return id;
     },
     update: async (c: Customer) => {
-      const idx = dbCache.customers.findIndex((x: any) => x.id === c.id);
+      const idx = dbCache.customers.findIndex((x: Customer) => x.id === c.id);
       if (idx > -1) {
         const newCustomers = [...dbCache.customers];
         newCustomers[idx] = c;
@@ -715,7 +1088,7 @@ export const db = {
       }
     },
     delete: async (id: string) => {
-      dbCache.customers = dbCache.customers.filter((c: any) => c.id !== id);
+      dbCache.customers = dbCache.customers.filter((c: Customer) => c.id !== id);
       SyncEngine.saveLocal();
       if (!isOfflineMode) try { await pool.query(`DELETE FROM "Customer" WHERE id=$1`, [id]); } catch (e) { }
     },
@@ -747,12 +1120,19 @@ export const db = {
         await client.query(`UPDATE "Customer" SET balance = $1, total_paid = $2, total_loan = $3 WHERE id = $4`,
           [newBalance, newTotalPaid, newTotalLoan, id]);
 
-        const c = dbCache.customers.find((x: any) => x.id === id);
+        const c = dbCache.customers.find((x: Customer) => x.id === id);
         if (c) {
           c.balanceDue = newBalance;
           c.totalPaid = newTotalPaid;
           c.totalLoan = newTotalLoan;
           SyncEngine.saveLocal();
+
+          if (!isOfflineMode) {
+            SyncEngine.addToQueue('ADD_CUSTOMER_FULL', c);
+            SyncEngine.processQueue();
+          } else {
+            SyncEngine.addToQueue('ADD_CUSTOMER_FULL', c);
+          }
         }
         return { balance: newBalance, totalPaid: newTotalPaid };
       } finally {
@@ -786,10 +1166,10 @@ export const db = {
       return dbCache.bills;
     },
     getAllForCustomer: async (cid: string) => {
-      return [...dbCache.bills.filter((b: any) => b.customerId === cid)];
+      return [...dbCache.bills.filter((b: Bill) => b.customerId === cid)];
     },
     getByInvoiceNumber: async (inv: string) => {
-      const local = dbCache.bills.find((b: any) => b.invoiceNumber.toUpperCase() === inv.toUpperCase());
+      const local = dbCache.bills.find((b: Bill) => b.invoiceNumber.toUpperCase() === inv.toUpperCase());
       if (local) return local;
       if (!isOfflineMode) {
         try {
@@ -806,6 +1186,34 @@ export const db = {
     },
     create: async (bill: Bill) => {
       dbCache.bills = [bill, ...dbCache.bills];
+
+      // Reduce stock locally right away so Offline Mode stays accurate.
+      for (const item of bill.items) {
+        if (isInventoryTrackedProduct(item.productId)) {
+          applyLocalStockDelta(item.productId, -toNum(item.quantity));
+        }
+      }
+
+      // Update customer balance in local cache immediately
+      if (bill.customerId) {
+        const balanceChange = bill.total - (bill.cashReceived || 0);
+        const cashReceived = bill.cashReceived || 0;
+
+        const customerIndex = dbCache.customers.findIndex((c: Customer) => c.id === bill.customerId);
+        if (customerIndex > -1) {
+          const customer = dbCache.customers[customerIndex];
+          const updatedCustomer = {
+            ...customer,
+            balanceDue: (customer.balanceDue || 0) + balanceChange,
+            totalLoan: (customer.totalLoan || 0) + balanceChange,
+            totalPaid: (customer.totalPaid || 0) + cashReceived
+          };
+          const newCustomers = [...dbCache.customers];
+          newCustomers[customerIndex] = updatedCustomer;
+          dbCache.customers = newCustomers;
+        }
+      }
+
       SyncEngine.saveLocal();
       if (!isOfflineMode) {
         SyncEngine.addToQueue('ADD_BILL', { bill });
@@ -816,15 +1224,19 @@ export const db = {
       return bill.id;
     },
     returnItem: async (billId: string, lineId: string, qty: number) => {
-      const bill = dbCache.bills.find((b: any) => b.id === billId);
+      const bill = dbCache.bills.find((b: Bill) => b.id === billId);
       let returnPayload: any = null;
       if (bill) {
-        const item = bill.items.find((i: any) => i.lineId === lineId || i.productId === lineId);
+        const item = bill.items.find((i: BillItem) => i.lineId === lineId || i.productId === lineId);
         if (item) {
+          const remainingQty = Math.max(0, toNum(item.quantity) - toNum(item.returnedQty));
+          if (qty <= 0 || qty > remainingQty) {
+            throw new Error(`Return quantity exceeds remaining quantity for ${item.name}. Remaining: ${remainingQty}`);
+          }
           item.returnedQty = (item.returnedQty || 0) + qty;
           returnPayload = {
             billId,
-            lineId: item.id || lineId,
+            lineId: item.lineId || lineId,
             qty,
             itemDetails: {
               productId: item.productId,
@@ -838,7 +1250,14 @@ export const db = {
               customerId: bill.customerId
             }
           };
+
+          if (isInventoryTrackedProduct(item.productId)) {
+            applyLocalStockDelta(item.productId, toNum(qty));
+          }
         }
+      }
+      if (!returnPayload) {
+        throw new Error('Could not find the selected bill item for return.');
       }
       SyncEngine.saveLocal();
       if (returnPayload) {
@@ -848,6 +1267,33 @@ export const db = {
         } else {
           SyncEngine.addToQueue('RETURN_ITEM', returnPayload);
         }
+      }
+    },
+    returnUnlinkedItem: async (productId: string, qty: number, price: number, cost: number, paymentType: string, customerId?: string) => {
+      if (isInventoryTrackedProduct(productId)) {
+        applyLocalStockDelta(productId, toNum(qty));
+      }
+
+      const returnPayload = {
+        unlinkedQty: qty,
+        unlinkedItemDetails: {
+          productId,
+          price,
+          cost,
+          profit: price - cost
+        },
+        unlinkedBillDetails: {
+          paymentType,
+          customerId: customerId || null
+        }
+      };
+
+      SyncEngine.saveLocal();
+      if (!isOfflineMode) {
+        try { await executeCloudOperation('UNLINKED_RETURN', returnPayload); }
+        catch (e) { isOfflineMode = true; SyncEngine.addToQueue('UNLINKED_RETURN', returnPayload); }
+      } else {
+        SyncEngine.addToQueue('UNLINKED_RETURN', returnPayload);
       }
     }
   },
@@ -868,7 +1314,7 @@ export const db = {
       return id;
     },
     update: async (e: Expense) => {
-      const idx = dbCache.expenses.findIndex((x: any) => x.id === e.id);
+      const idx = dbCache.expenses.findIndex((x: Expense) => x.id === e.id);
       if (idx > -1) {
         const d = [...dbCache.expenses];
         d[idx] = e;
@@ -877,7 +1323,7 @@ export const db = {
       }
     },
     delete: async (id: string) => {
-      dbCache.expenses = dbCache.expenses.filter((x: any) => x.id !== id);
+      dbCache.expenses = dbCache.expenses.filter((x: Expense) => x.id !== id);
       SyncEngine.saveLocal();
       if (!isOfflineMode) {
         try { await pool.query(`DELETE FROM "Expense" WHERE id=$1`, [id]); } catch (e) { }
@@ -902,14 +1348,14 @@ export const db = {
         } catch (e) { }
       }
       const today = new Date().toISOString().split('T')[0];
-      return dbCache.bills.filter((b: any) =>
+      return dbCache.bills.filter((b: Bill) =>
         b.customerId &&
         (b.total - (b.cashReceived || 0) > 0.1) &&
         b.dueDate &&
         b.dueDate < today &&
         !b.archived
-      ).map((b: any) => {
-        const c = dbCache.customers.find((cust: any) => cust.id === b.customerId);
+      ).map((b: Bill) => {
+        const c = dbCache.customers.find((cust: Customer) => cust.id === b.customerId);
         return {
           ...b,
           whatsapp: c?.phone,
@@ -936,7 +1382,7 @@ export const db = {
       return id;
     },
     update: async (s: Supplier) => {
-      const idx = dbCache.suppliers.findIndex((x: any) => x.id === s.id);
+      const idx = dbCache.suppliers.findIndex((x: Supplier) => x.id === s.id);
       if (idx > -1) {
         const newSuppliers = [...dbCache.suppliers];
         newSuppliers[idx] = s;
@@ -951,7 +1397,7 @@ export const db = {
       }
     },
     delete: async (id: string) => {
-      dbCache.suppliers = dbCache.suppliers.filter((x: any) => x.id !== id);
+      dbCache.suppliers = dbCache.suppliers.filter((x: Supplier) => x.id !== id);
       SyncEngine.saveLocal();
       if (!isOfflineMode) try { await pool.query(`DELETE FROM "Supplier" WHERE id=$1`, [id]); } catch (e) { }
     }
@@ -973,22 +1419,22 @@ export const db = {
       return id;
     },
     update: async (po: PurchaseOrder) => {
-      const idx = dbCache.purchaseOrders.findIndex((x: any) => x.id === po.id);
+      const idx = dbCache.purchaseOrders.findIndex((x: PurchaseOrder) => x.id === po.id);
       if (idx > -1) {
         const d = [...dbCache.purchaseOrders];
         d[idx] = po;
         dbCache.purchaseOrders = d;
         SyncEngine.saveLocal();
         if (!isOfflineMode) {
-          SyncEngine.addToQueue('UPDATE_PO_STATUS', po);
+          SyncEngine.addToQueue('ADD_PURCHASE_ORDER', po);
           SyncEngine.processQueue();
         } else {
-          SyncEngine.addToQueue('UPDATE_PO_STATUS', po);
+          SyncEngine.addToQueue('ADD_PURCHASE_ORDER', po);
         }
       }
     },
     delete: async (id: string) => {
-      dbCache.purchaseOrders = dbCache.purchaseOrders.filter((x: any) => x.id !== id);
+      dbCache.purchaseOrders = dbCache.purchaseOrders.filter((x: PurchaseOrder) => x.id !== id);
       SyncEngine.saveLocal();
       if (!isOfflineMode) try { await pool.query(`DELETE FROM "PurchaseOrder" WHERE id=$1`, [id]); } catch (e) { }
     }
@@ -996,21 +1442,25 @@ export const db = {
 
   payments: {
     getAll: async () => [...dbCache.payments],
-    getByCustomerId: async (cid: string) => dbCache.payments.filter((p: any) => p.customerId === cid),
+    getByCustomerId: async (cid: string) => dbCache.payments.filter((p: Payment) => p.customerId === cid),
     add: async (p: Partial<Payment>) => {
       const id = generateId();
       const payment = { ...p, id, date: new Date().toISOString() } as Payment;
       dbCache.payments = [payment, ...dbCache.payments];
-      const c = dbCache.customers.find((cust: any) => cust.id === payment.customerId);
+      const c = dbCache.customers.find((cust: Customer) => cust.id === payment.customerId);
       if (c) {
         const newC = { ...c };
-        newC.balanceDue -= payment.amount;
-        newC.totalPaid += payment.amount;
-        newC.totalLoan = Math.max(0, newC.totalLoan - payment.amount);
-        const cIdx = dbCache.customers.findIndex((x: any) => x.id === c.id);
+        newC.balanceDue = Math.round(Math.max(0, newC.balanceDue - payment.amount));
+        newC.totalPaid = Math.round(newC.totalPaid + payment.amount);
+        const cIdx = dbCache.customers.findIndex((x: Customer) => x.id === c.id);
         const carts = [...dbCache.customers];
         carts[cIdx] = newC;
         dbCache.customers = carts;
+        if (!isOfflineMode) {
+          SyncEngine.addToQueue('ADD_CUSTOMER_FULL', newC);
+        } else {
+          SyncEngine.addToQueue('ADD_CUSTOMER_FULL', newC);
+        }
       }
       SyncEngine.saveLocal();
       if (!isOfflineMode) {
@@ -1022,24 +1472,25 @@ export const db = {
       return id;
     },
     update: async (id: string, cid: string, oldAmount: number, newAmount: number, note: string) => {
-      const idx = dbCache.payments.findIndex((x: any) => x.id === id);
+      const idx = dbCache.payments.findIndex((x: Payment) => x.id === id);
       if (idx > -1) {
         const pArr = [...dbCache.payments];
         pArr[idx] = { ...pArr[idx], amount: newAmount, note };
         dbCache.payments = pArr;
-        const c = dbCache.customers.find((cust: any) => cust.id === cid);
+        const c = dbCache.customers.find((cust: Customer) => cust.id === cid);
         if (c) {
           const newC = { ...c };
-          newC.balanceDue += oldAmount;
-          newC.balanceDue -= newAmount;
-          newC.totalPaid -= oldAmount;
-          newC.totalPaid += newAmount;
-          newC.totalLoan += oldAmount;
-          newC.totalLoan = Math.max(0, newC.totalLoan - newAmount);
-          const cIdx = dbCache.customers.findIndex((x: any) => x.id === c.id);
+          newC.balanceDue = Math.round(Math.max(0, newC.balanceDue + oldAmount - newAmount));
+          newC.totalPaid = Math.round(newC.totalPaid - oldAmount + newAmount);
+          const cIdx = dbCache.customers.findIndex((x: Customer) => x.id === c.id);
           const carts = [...dbCache.customers];
           carts[cIdx] = newC;
           dbCache.customers = carts;
+          if (!isOfflineMode) {
+            SyncEngine.addToQueue('ADD_CUSTOMER_FULL', newC);
+          } else {
+            SyncEngine.addToQueue('ADD_CUSTOMER_FULL', newC);
+          }
         }
         SyncEngine.saveLocal();
         if (!isOfflineMode) {
@@ -1051,17 +1502,21 @@ export const db = {
       }
     },
     delete: async (id: string, cid: string, amount: number) => {
-      dbCache.payments = dbCache.payments.filter((x: any) => x.id !== id);
-      const c = dbCache.customers.find((cust: any) => cust.id === cid);
+      dbCache.payments = dbCache.payments.filter((x: Payment) => x.id !== id);
+      const c = dbCache.customers.find((cust: Customer) => cust.id === cid);
       if (c) {
         const newC = { ...c };
-        newC.balanceDue += amount;
-        newC.totalPaid -= amount;
-        newC.totalLoan += amount;
-        const cIdx = dbCache.customers.findIndex((x: any) => x.id === c.id);
+        newC.balanceDue = Math.round(Math.max(0, newC.balanceDue + amount));
+        newC.totalPaid = Math.round(newC.totalPaid - amount);
+        const cIdx = dbCache.customers.findIndex((x: Customer) => x.id === c.id);
         const carts = [...dbCache.customers];
         carts[cIdx] = newC;
         dbCache.customers = carts;
+        if (!isOfflineMode) {
+          SyncEngine.addToQueue('ADD_CUSTOMER_FULL', newC);
+        } else {
+          SyncEngine.addToQueue('ADD_CUSTOMER_FULL', newC);
+        }
       }
       SyncEngine.saveLocal();
       if (!isOfflineMode) try { await pool.query(`DELETE FROM "Payment" WHERE id=$1`, [id]); } catch (e) { }
@@ -1070,16 +1525,16 @@ export const db = {
 
   supplierPayments: {
     getAll: async () => [...dbCache.supplierPayments],
-    getBySupplierId: async (sid: string) => dbCache.supplierPayments.filter((p: any) => p.supplierId === sid),
+    getBySupplierId: async (sid: string) => dbCache.supplierPayments.filter((p: SupplierPayment) => p.supplierId === sid),
     add: async (p: Partial<SupplierPayment>) => {
       const id = generateId();
       const payment = { ...p, id, date: new Date().toISOString() } as SupplierPayment;
       dbCache.supplierPayments = [payment, ...dbCache.supplierPayments];
       if (payment.purchaseOrderId) {
-        const po = dbCache.purchaseOrders.find((x: any) => x.id === payment.purchaseOrderId);
+        const po = dbCache.purchaseOrders.find((x: PurchaseOrder) => x.id === payment.purchaseOrderId);
         if (po) {
           const newPo = { ...po, paidAmount: (po.paidAmount || 0) + payment.amount };
-          const poIdx = dbCache.purchaseOrders.findIndex((x: any) => x.id === po.id);
+          const poIdx = dbCache.purchaseOrders.findIndex((x: PurchaseOrder) => x.id === po.id);
           const pos = [...dbCache.purchaseOrders];
           pos[poIdx] = newPo;
           dbCache.purchaseOrders = pos;
@@ -1095,16 +1550,16 @@ export const db = {
       return id;
     },
     update: async (id: string, oldAmount: number, newAmount: number, note: string, method: string, poId?: string) => {
-      const idx = dbCache.supplierPayments.findIndex((x: any) => x.id === id);
+      const idx = dbCache.supplierPayments.findIndex((x: SupplierPayment) => x.id === id);
       if (idx > -1) {
         const arr = [...dbCache.supplierPayments];
-        arr[idx] = { ...arr[idx], amount: newAmount, note, paymentMethod: method, purchaseOrderId: poId };
+        arr[idx] = { ...arr[idx], amount: newAmount, note, paymentMethod: method as any, purchaseOrderId: poId };
         dbCache.supplierPayments = arr;
         if (poId) {
-          const po = dbCache.purchaseOrders.find((x: any) => x.id === poId);
+          const po = dbCache.purchaseOrders.find((x: PurchaseOrder) => x.id === poId);
           if (po) {
             const newPo = { ...po, paidAmount: (po.paidAmount || 0) - oldAmount + newAmount };
-            const poIdx = dbCache.purchaseOrders.findIndex((x: any) => x.id === po.id);
+            const poIdx = dbCache.purchaseOrders.findIndex((x: PurchaseOrder) => x.id === po.id);
             const pos = [...dbCache.purchaseOrders];
             pos[poIdx] = newPo;
             dbCache.purchaseOrders = pos;
@@ -1120,26 +1575,26 @@ export const db = {
       }
     },
     delete: async (id: string) => {
-      const pay = dbCache.supplierPayments.find((x: any) => x.id === id);
+      const pay = dbCache.supplierPayments.find((x: SupplierPayment) => x.id === id);
       if (pay && pay.purchaseOrderId) {
-        const po = dbCache.purchaseOrders.find((x: any) => x.id === pay.purchaseOrderId);
+        const po = dbCache.purchaseOrders.find((x: PurchaseOrder) => x.id === pay.purchaseOrderId);
         if (po) {
           const newPo = { ...po, paidAmount: po.paidAmount - pay.amount };
-          const poIdx = dbCache.purchaseOrders.findIndex((x: any) => x.id === po.id);
+          const poIdx = dbCache.purchaseOrders.findIndex((x: PurchaseOrder) => x.id === po.id);
           const pos = [...dbCache.purchaseOrders];
           pos[poIdx] = newPo;
           dbCache.purchaseOrders = pos;
         }
       }
-      dbCache.supplierPayments = dbCache.supplierPayments.filter((x: any) => x.id !== id);
+      dbCache.supplierPayments = dbCache.supplierPayments.filter((x: SupplierPayment) => x.id !== id);
       SyncEngine.saveLocal();
       if (!isOfflineMode) try { await pool.query(`DELETE FROM "SupplierPayment" WHERE id=$1`, [id]); } catch (e) { }
     },
     updateStatus: async (id: string, status: string) => {
-      const idx = dbCache.supplierPayments.findIndex((x: any) => x.id === id);
+      const idx = dbCache.supplierPayments.findIndex((x: SupplierPayment) => x.id === id);
       if (idx > -1) {
         const arr = [...dbCache.supplierPayments];
-        arr[idx] = { ...arr[idx], chequeStatus: status };
+        arr[idx] = { ...arr[idx], chequeStatus: status as any };
         dbCache.supplierPayments = arr;
         SyncEngine.saveLocal();
         if (!isOfflineMode) {
@@ -1168,7 +1623,7 @@ export const db = {
         SyncEngine.addToQueue('ADD_SUMMARY', s);
       }
     },
-    getArchivedBills: async (id: string) => [],
-    getArchivedExpenses: async (id: string) => []
+    getArchivedBills: async (id: string): Promise<Bill[]> => [],
+    getArchivedExpenses: async (id: string): Promise<Expense[]> => []
   }
 };

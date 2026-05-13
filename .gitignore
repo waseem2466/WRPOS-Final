@@ -8,6 +8,7 @@ pnpm-debug.log*
 lerna-debug.log*
 
 node_modules
+.netlify/
 dist
 dist-ssr
 *.local
@@ -24,6 +25,7 @@ dist-ssr
 *.sw?
 .aider*
 .env
+.env.new
 auth_info_baileys
 data/
 

@@ -47,9 +47,10 @@ interface CRMNote {
 }
 
 const DEFAULT_TEMPLATES: Template[] = [
-   { id: 't1', name: 'Gentle Reminder', category: 'Recovery', content: "Hi {name}, friendly reminder that your balance of LKR {balance} is due. Please settle via bank transfer to BOC: 95733864 or HNB: 174020112495 (N K W Khan). Join our updates: https://chat.whatsapp.com/K7ALigMk9ad4SBlcRUqoxX?mode=wwt" },
-   { id: 't2', name: 'VIP Exclusive', category: 'Promo', content: "Hello {name}! As a valued VIP, we have a special offer waiting for you at the store. Show this text for 5% off!" },
-   { id: 't3', name: 'Stock Update', category: 'Update', content: "Hi {name}, new arrivals are here! Check out our latest collection this weekend." }
+   { id: 't1', name: 'Gentle Reminder', category: 'Recovery', content: "Hi {name}, your balance of LKR {balance} is pending with {business}. Please settle soon. For help, contact {contact}." },
+   { id: 't2', name: 'VIP Exclusive', category: 'Promo', content: "Hello {name}, thank you for being a VIP customer of {business}. Show this message in store and enjoy 5% off on your next purchase." },
+   { id: 't3', name: 'Stock Update', category: 'Update', content: "Hi {name}, new items have arrived at {business}. Visit us this week to check the latest stock. Contact: {contact}." },
+   { id: 't4', name: 'WhatsApp Group Invite', category: 'Promo', content: "Hi {name}! Welcome to WR Smile & Supplies.\n\nJoin our WhatsApp group for latest products, offers, new arrivals, and quick order updates:\nhttps://chat.whatsapp.com/K7ALigMk9ad4SBlcRUqoxX?mode=wwt\n\nFor orders or help, call/WhatsApp:\n0719336848 / 0779336848\n\nThank you!\nWR Smile & Supplies" }
 ];
 
 export const MarketingHub: React.FC = () => {
@@ -203,10 +204,10 @@ export const MarketingHub: React.FC = () => {
       setIsGenerating(true);
       try {
          const promptMap = {
-            'debt': "Write a professional, polite, yet firm WhatsApp message (under 30 words) reminding a customer named '{name}' about their pending balance of '{balance}'. Include a call to action to settle. Do not include placeholders other than {name} and {balance}.",
-            'loyal': "Write a warm, appreciative WhatsApp message (under 30 words) to a loyal customer named '{name}'. Thank them for their continued business volume of '{balance}' and mention they are a valued VIP.",
-            'all': "Write a generic seasonal sale announcement WhatsApp message (under 30 words) for a customer named '{name}'. Use emojis.",
-            'dormant': "Write a 'We miss you' WhatsApp message (under 30 words) for a customer named '{name}' who hasn't visited in a while. Offer a small incentive to return."
+            'debt': "Write a professional WhatsApp reminder for customer '{name}' about pending balance '{balance}'. Keep it under 25 words, clear, polite, and without long promotion text.",
+            'loyal': "Write a warm WhatsApp message for loyal customer '{name}'. Keep it under 25 words, thank them, and mention a simple VIP benefit.",
+            'all': "Write a short sale announcement WhatsApp message for customer '{name}'. Keep it under 25 words, simple, clear, and avoid long advertisement wording.",
+            'dormant': "Write a short 'we miss you' WhatsApp message for customer '{name}'. Keep it under 25 words and offer a simple reason to return."
          };
 
          const prompt = promptMap[filterType] || promptMap['all'];
@@ -221,6 +222,8 @@ export const MarketingHub: React.FC = () => {
 
    const prepareCampaign = () => {
       if (selectedIds.size === 0 || !message) return;
+      const businessName = settings?.businessName || 'WR Smile & Supplies';
+      const contactPhone = settings?.contactPhone || '0719336848';
       const queue: QueueItem[] = Array.from(selectedIds).map(id => {
          const c = customers.find(cust => cust.id === id);
          if (!c) return null;
@@ -228,7 +231,11 @@ export const MarketingHub: React.FC = () => {
             id: c.id,
             name: c.name,
             phone: cleanPhone(c.phone),
-            message: message.replace(/{name}/gi, c.name).replace(/{balance}/gi, c.balanceDue.toLocaleString()),
+            message: message
+               .replace(/{name}/gi, c.name)
+               .replace(/{balance}/gi, c.balanceDue.toLocaleString())
+               .replace(/{business}/gi, businessName)
+               .replace(/{contact}/gi, contactPhone),
             status: 'PENDING'
          };
       }).filter(Boolean) as QueueItem[];
@@ -244,11 +251,17 @@ export const MarketingHub: React.FC = () => {
       const item = campaignQueue[currentIndex];
 
       try {
-         await whatsappService.sendDirect(settings, item.phone, item.message);
-         setTransmissionLogs(prev => [{ name: item.name, status: 'ok' as const, time: new Date().toLocaleTimeString() }, ...prev].slice(0, 50));
-         setCampaignQueue(prev => { const next = [...prev]; next[currentIndex].status = 'SENT'; return next; });
+         const result = await whatsappService.sendDirect(settings, item.phone, item.message);
+         if (result.success) {
+            setTransmissionLogs(prev => [{ name: item.name, status: 'ok' as const, time: new Date().toLocaleTimeString() }, ...prev].slice(0, 50));
+            setCampaignQueue(prev => { const next = [...prev]; next[currentIndex].status = 'SENT'; return next; });
+         } else {
+            console.error("Failed to dispatch message:", result.error);
+            setTransmissionLogs(prev => [{ name: item.name, status: 'fail' as const, time: new Date().toLocaleTimeString() }, ...prev].slice(0, 50));
+            setCampaignQueue(prev => { const next = [...prev]; next[currentIndex].status = 'SKIPPED'; return next; });
+         }
       } catch (e) {
-         console.error("Failed to dispatch message:", e);
+         console.error("Exception during dispatch:", e);
          setTransmissionLogs(prev => [{ name: item.name, status: 'fail' as const, time: new Date().toLocaleTimeString() }, ...prev].slice(0, 50));
          setCampaignQueue(prev => { const next = [...prev]; next[currentIndex].status = 'SKIPPED'; return next; });
       }
@@ -279,13 +292,12 @@ export const MarketingHub: React.FC = () => {
 
    const saveTemplate = () => {
       if (!message) return;
-      const name = prompt("Template Name:");
-      if (name) {
-         const newT: Template = { id: Date.now().toString(), name, content: message, category: 'Promo' };
-         const updated = [...templates, newT];
-         setTemplates(updated);
-         localStorage.setItem('wr_pos_templates', JSON.stringify(updated));
-      }
+      const name = `Template ${new Date().toLocaleTimeString()}`;
+      const newT: Template = { id: Date.now().toString(), name, content: message, category: 'Promo' };
+      const updated = [...templates, newT];
+      setTemplates(updated);
+      localStorage.setItem('wr_pos_templates', JSON.stringify(updated));
+      alert(`Message saved as "${name}"`);
    };
 
    const completedCount = campaignQueue.filter(i => i.status !== 'PENDING').length;
@@ -294,6 +306,21 @@ export const MarketingHub: React.FC = () => {
    // Active Customer for Focus Mode
    const activeCustomer = activeCustomerId ? customers.find(c => c.id === activeCustomerId) : null;
 
+   const handleSendActiveCustomer = async () => {
+      if (!activeCustomer) return;
+      if (!settings) {
+         alert('Business settings are still loading. Please try again.');
+         return;
+      }
+
+      const payload = (message.trim() || `Hi ${activeCustomer.name}, this is ${settings.businessName || 'WR POS'}.`)
+         .replace(/{name}/gi, activeCustomer.name)
+         .replace(/{balance}/gi, activeCustomer.balanceDue.toLocaleString());
+
+      const result = await whatsappService.sendDirect(settings, activeCustomer.phone, payload);
+      alert(result.success ? `WhatsApp sent to ${activeCustomer.name}.` : `WhatsApp failed: ${result.error || 'Send failed'}`);
+   };
+
    return (
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 animate-in fade-in duration-700 h-full min-h-0 relative">
 
@@ -301,8 +328,8 @@ export const MarketingHub: React.FC = () => {
          {isCampaignActive && (
             <div className="absolute inset-0 z-[100] bg-[#0b1121]/95 backdrop-blur-xl flex items-center justify-center p-6 animate-in zoom-in-95 duration-300">
                {/* ... (Existing Campaign UI) ... */}
-               <GlassCard className="w-full max-w-2xl bg-black/40 border-2 border-white/10 p-8 rounded-[3rem] shadow-3xl flex flex-col h-[600px]">
-                  <div className="flex justify-between items-center mb-8 shrink-0">
+               <GlassCard className="w-full max-w-2xl bg-black/40 border-2 border-white/10 p-5 sm:p-6 rounded-[2rem] shadow-3xl flex flex-col h-[min(680px,calc(100vh-5rem))]">
+                  <div className="flex justify-between items-center mb-5 shrink-0">
                      <div className="flex items-center gap-4">
                         <div className="w-12 h-12 bg-blue-600 rounded-2xl flex items-center justify-center shadow-lg shadow-blue-600/20 animate-pulse">
                            <Zap size={24} className="text-white" />
@@ -320,33 +347,33 @@ export const MarketingHub: React.FC = () => {
                   </div>
 
                   {currentIndex < campaignQueue.length ? (
-                     <div className="flex-1 flex flex-col items-center justify-center space-y-8 text-center relative">
+                     <div className="flex-1 min-h-0 flex flex-col items-center space-y-4 text-center relative pt-5">
                         <div className="w-full h-1 bg-white/5 rounded-full overflow-hidden absolute top-0">
                            <div className="h-full bg-blue-500 transition-all duration-300" style={{ width: `${progress}%` }}></div>
                         </div>
 
-                        <div className="space-y-2">
-                           <div className="w-20 h-20 bg-gradient-to-br from-purple-600 to-blue-600 rounded-full mx-auto flex items-center justify-center text-2xl font-black text-white shadow-2xl mb-4">
+                        <div className="space-y-1 shrink-0 max-w-full">
+                           <div className="w-14 h-14 bg-gradient-to-br from-purple-600 to-blue-600 rounded-full mx-auto flex items-center justify-center text-xl font-black text-white shadow-2xl mb-2">
                               {campaignQueue[currentIndex].name.charAt(0)}
                            </div>
-                           <h2 className="text-3xl font-black text-white uppercase tracking-tight">{campaignQueue[currentIndex].name}</h2>
-                           <p className="text-sm font-bold text-gray-500 font-mono tracking-widest">{campaignQueue[currentIndex].phone}</p>
+                           <h2 className="text-xl sm:text-2xl font-black text-white uppercase tracking-normal leading-tight break-words max-w-full px-2">{campaignQueue[currentIndex].name}</h2>
+                           <p className="text-xs font-bold text-gray-500 font-mono tracking-wide break-words">{campaignQueue[currentIndex].phone}</p>
                         </div>
 
-                        <div className="w-full bg-white/5 border border-white/5 rounded-2xl p-6 text-left relative overflow-hidden group">
+                        <div className="w-full bg-white/5 border border-white/5 rounded-2xl p-4 text-left relative overflow-hidden group shrink-0">
                            <p className="text-[10px] text-gray-500 font-black uppercase tracking-widest mb-2">Payload Preview</p>
-                           <p className="text-sm font-medium text-gray-300 leading-relaxed whitespace-pre-wrap">
+                           <p className="text-[12px] sm:text-[13px] font-medium text-gray-300 leading-relaxed whitespace-pre-wrap max-h-44 overflow-y-auto custom-scrollbar pr-1 break-words">
                               {campaignQueue[currentIndex].message}
                            </p>
                         </div>
 
-                        <div className="flex items-center gap-4 w-full">
+                        <div className="flex items-center gap-3 w-full shrink-0">
                            <button onClick={handleSkipCurrent} className="p-4 bg-white/5 text-gray-500 hover:text-white rounded-2xl border border-white/5 transition-all">
                               <SkipForward size={24} />
                            </button>
                            <button
                               onClick={handleSendCurrent}
-                              className="flex-1 py-6 bg-emerald-600 hover:bg-emerald-500 text-white rounded-3xl text-sm font-black uppercase tracking-[0.3em] shadow-2xl shadow-emerald-600/20 active:scale-95 transition-all flex items-center justify-center gap-3"
+                              className="flex-1 py-4 bg-emerald-600 hover:bg-emerald-500 text-white rounded-2xl text-xs font-black uppercase tracking-[0.18em] shadow-2xl shadow-emerald-600/20 active:scale-95 transition-all flex items-center justify-center gap-3"
                            >
                               <Send size={20} /> DISPATCH
                            </button>
@@ -359,7 +386,7 @@ export const MarketingHub: React.FC = () => {
                         </div>
 
                         {/* Transmission Logs */}
-                        <div className="w-full mt-4 flex-1 min-h-0 flex flex-col">
+                        <div className="w-full flex-1 min-h-0 flex flex-col">
                            <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-3 flex justify-between">
                               <span>Transmission Log</span>
                               {autoPlay && <span className="text-blue-400 animate-pulse">Auto-Relay Active</span>}
@@ -596,7 +623,7 @@ export const MarketingHub: React.FC = () => {
                         <button onClick={() => addCrmNote('CALL')} className="p-3 bg-blue-600/10 border border-blue-500/20 rounded-xl text-[9px] font-black text-blue-400 uppercase hover:bg-blue-600 hover:text-white transition-all flex flex-col items-center gap-1">
                            <Phone size={16} /> Log Call
                         </button>
-                        <button onClick={() => window.open(`https://api.whatsapp.com/send?phone=${cleanPhone(activeCustomer.phone)}`, '_blank')} className="p-3 bg-emerald-600/10 border border-emerald-500/20 rounded-xl text-[9px] font-black text-emerald-400 uppercase hover:bg-emerald-600 hover:text-white transition-all flex flex-col items-center gap-1">
+                        <button onClick={handleSendActiveCustomer} className="p-3 bg-emerald-600/10 border border-emerald-500/20 rounded-xl text-[9px] font-black text-emerald-400 uppercase hover:bg-emerald-600 hover:text-white transition-all flex flex-col items-center gap-1">
                            <MessageSquare size={16} /> WhatsApp
                         </button>
                      </div>

@@ -47,8 +47,8 @@ function runCmd(cmd: string): string {
 // 4️⃣  LLM wrapper (points at local Ollama)
 // ------------------------------------------------------------------
 const model = new ChatOllama({
-  baseUrl: process.env.OLLAMA_HOST ?? "http://127.0.0.1:11434",
-  model: "codellama:7b",
+  baseUrl: process.env.OLLAMA_HOST ?? process.env.OLLAMA_BASE_URL ?? "http://127.0.0.1:11434",
+  model: process.env.LOCAL_OLLAMA_MODEL ?? "qwen2.5:3b",
   temperature: 0.2,
   streaming: false
 });

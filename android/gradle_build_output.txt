@@ -1,0 +1,40 @@
+﻿.\gradlew.bat : 
+At line:1 char:1
++ .\gradlew.bat 
+assembleDebug 2>&1 | 
+Out-File -FilePath 
+"gradle_build_o ...
++ ~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~
+    + CategoryInfo     
+         : NotSpecifi  
+  ed: (:String) [],    
+ RemoteException
+    + FullyQualifiedEr 
+   rorId : NativeComm  
+  andError
+ 
+FAILURE: Build failed 
+with an exception.
+
+* What went wrong:
+The supplied javaHome 
+seems to be invalid. I 
+cannot find the java 
+executable. Tried 
+location: C:\Program 
+Files\Eclipse Adoptium\
+jdk-25.0.1.8-hotspot\bi
+n\java.exe
+
+* Try:
+> Run with 
+--stacktrace option to 
+get the stack trace.
+> Run with --info or 
+--debug option to get 
+more log output.
+> Run with --scan to 
+get full insights.
+> Get more help at http
+s://help.gradle.org.

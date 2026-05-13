@@ -1,4 +1,5 @@
-import type { Pool, PoolClient, QueryResult } from 'pg';
+import type { Pool as PgPool, PoolClient, QueryResult } from 'pg';
+import { Pool as NeonPool } from '@neondatabase/serverless';
 import { errorHandler } from './errorHandler';
 
 const isElectron = typeof window !== 'undefined' && (window as any).electronAPI;
@@ -31,7 +32,10 @@ class ElectronPoolWrapper {
   private createMockClient(clientId: string): { query: (text: string, params?: unknown[]) => Promise<unknown>; release: () => Promise<void> } {
     return {
       query: async (text: string, params?: unknown[]) => {
-        return await (window as any).electronAPI?.dbQuery?.(text, params, clientId);
+        const result = await (window as any).electronAPI?.dbQuery?.(text, params, clientId);
+        if (!result) throw new Error('No response from database process');
+        if (result.success === false) throw new Error(result.error || 'Database query failed');
+        return result;
       },
       release: async () => {
         await (window as any).electronAPI?.dbRelease?.(clientId);
@@ -41,7 +45,10 @@ class ElectronPoolWrapper {
 
   async query(text: string, params?: unknown[]) {
     try {
-      return await (window as any).electronAPI?.dbQuery?.(text, params);
+      const result = await (window as any).electronAPI?.dbQuery?.(text, params);
+      if (!result) throw new Error('No response from database process');
+      if (result.success === false) throw new Error(result.error || 'Database query failed');
+      return result;
     } catch (e: unknown) {
       const err = e instanceof Error ? e : new Error(String(e));
       errorHandler.log('Database', err, { operation: 'query', query: text }, 'high');
@@ -55,8 +62,19 @@ class ElectronPoolWrapper {
   }
 }
 
-// Export appropriate pool based on environment (always Electron wrapper in renderer)
-export const pool = new ElectronPoolWrapper() as unknown as Pool;
+// Export appropriate pool based on environment
+// In Electron, we use the IPC bridge. In Web, we use the Neon serverless driver.
+const databaseUrl = (typeof process !== 'undefined' && process.env?.DATABASE_URL) || import.meta.env.VITE_DATABASE_URL;
+
+export const pool = isElectron 
+  ? (new ElectronPoolWrapper() as unknown as PgPool)
+  : (new NeonPool({ 
+      connectionString: databaseUrl,
+      connectionTimeoutMillis: 15000, // Wait 15s for "Wake Up"
+      max: 20,
+      idleTimeoutMillis: 30000,
+    }) as unknown as PgPool);
+
 export const dbPool = pool;
 
 // Helper function for transactions
@@ -85,8 +103,9 @@ export const checkDatabaseHealth = async (): Promise<boolean> => {
     client.release();
     return true;
   } catch (e: unknown) {
-    const err = e instanceof Error ? e : new Error(String(e));
+    const err = e instanceof Error ? e : new Error(String(err));
     errorHandler.log('Database', err, { operation: 'healthCheck' }, 'critical');
     return false;
   }
 };
+

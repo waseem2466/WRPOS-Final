@@ -17,9 +17,17 @@ if (typeof window !== 'undefined') {
 
 // Polyfill process if it doesn't exist (minimal)
 if (typeof (globalThis as any).process === 'undefined') {
-    (globalThis as any).process = {
-        env: {},
-        version: '',
-        nextTick: (cb: any) => setTimeout(cb, 0),
-    };
+    (globalThis as any).process = { env: {} };
+}
+if (!(globalThis as any).process.env) {
+    (globalThis as any).process.env = {};
+}
+
+// Force BETTER_AUTH_URL for Electron file:// compatibility
+// This ensures that any BetterAuth client initialized without a baseURL will fallback to this valid HTTPS URL
+(globalThis as any).process.env.BETTER_AUTH_URL = 'https://ep-muddy-bush-aeihyvce.neonauth.c-2.us-east-2.aws.neon.tech/neondb/auth';
+(globalThis as any).process.env.NODE_ENV = (globalThis as any).process.env.NODE_ENV || 'production';
+
+if (typeof (globalThis as any).process.nextTick === 'undefined') {
+    (globalThis as any).process.nextTick = (cb: any) => setTimeout(cb, 0);
 }
