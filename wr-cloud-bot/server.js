@@ -41,7 +41,7 @@ async function connectToWhatsApp() {
     const sock = makeWASocket({
         version,
         auth: state,
-        printQRInTerminal: true,
+        printQRInTerminal: false,
         logger: pino({ level: 'silent' }),
         browser: Browsers.ubuntu('Chrome'),
         syncFullHistory: false,
@@ -59,7 +59,21 @@ async function connectToWhatsApp() {
         }
         if (connection === 'close') {
             console.error('Disconnect Reason:', lastDisconnect?.error);
-            const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
+            const statusCode = lastDisconnect?.error?.output?.statusCode;
+            const isConflict = statusCode === 440;
+            const isUnauthorized = statusCode === 401;
+            const shouldReconnect = !isConflict && !isUnauthorized && statusCode !== DisconnectReason.loggedOut;
+
+            if (isConflict) {
+                console.error('[WhatsApp] Connection conflict detected. Another session is active for this phone number.');
+                console.error('[WhatsApp] Stop reconnecting until the other session is removed or the session file is refreshed.');
+            }
+
+            if (isUnauthorized) {
+                console.error('[WhatsApp] Unauthorized connection failure detected (401). The stored session is invalid or expired.');
+                console.error('[WhatsApp] Stop reconnecting until the session is refreshed with a new auth file.');
+            }
+
             console.log('Connection closed. Reconnecting:', shouldReconnect);
             if (shouldReconnect) {
                 setTimeout(connectToWhatsApp, 3000); // Wait 3 seconds to prevent rapid crash loops
