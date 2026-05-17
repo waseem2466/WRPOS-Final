@@ -3,17 +3,40 @@ import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 import { Bill, BusinessSettings, Customer } from '../types';
 import { errorHandler } from './errorHandler';
-import { supabase } from '../src/services/supabase';
+import { adminSupabase } from '../src/services/supabase';
+
+const cleanupOldInvoices = async () => {
+    try {
+        if (!adminSupabase) return;
+        const { data: files, error } = await adminSupabase.storage.from('invoices').list();
+        if (error || !files) return;
+
+        const fourteenDaysAgo = new Date();
+        fourteenDaysAgo.setDate(fourteenDaysAgo.getDate() - 14);
+
+        const filesToDelete = files
+            .filter(f => new Date(f.created_at) < fourteenDaysAgo)
+            .map(f => f.name);
+
+        if (filesToDelete.length > 0) {
+            await adminSupabase.storage.from('invoices').remove(filesToDelete);
+            console.log(`[Supabase] Cleaned up ${filesToDelete.length} old invoices.`);
+        }
+    } catch (e) {
+        console.warn('Failed to cleanup old invoices:', e);
+    }
+};
 
 const uploadInvoiceToSupabase = async (pdfBlob: Blob, invoiceNumber: string): Promise<string> => {
+    cleanupOldInvoices(); // Fire and forget in background
     try {
-        if (!supabase) {
+        if (!adminSupabase) {
             throw new Error('Supabase is not configured. Check VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.');
         }
 
         const safeInvoiceNumber = String(invoiceNumber || 'invoice').replace(/[^a-zA-Z0-9_-]/g, '_');
         const fileName = `${safeInvoiceNumber}_${Date.now()}.pdf`;
-        const { error, data } = await supabase.storage
+        const { error, data } = await adminSupabase.storage
             .from('invoices')
             .upload(fileName, pdfBlob, {
                 contentType: 'application/pdf',
@@ -22,7 +45,7 @@ const uploadInvoiceToSupabase = async (pdfBlob: Blob, invoiceNumber: string): Pr
 
         if (error) throw error;
 
-        const signedUrlResult = await supabase.storage
+        const signedUrlResult = await adminSupabase.storage
             .from('invoices')
             .createSignedUrl(data?.path || fileName, 60 * 60 * 24 * 90);
 
@@ -30,7 +53,7 @@ const uploadInvoiceToSupabase = async (pdfBlob: Blob, invoiceNumber: string): Pr
             return signedUrlResult.data.signedUrl;
         }
 
-        const { data: { publicUrl } } = supabase.storage
+        const { data: { publicUrl } } = adminSupabase.storage
             .from('invoices')
             .getPublicUrl(data?.path || fileName);
 
@@ -51,6 +74,29 @@ const uploadInvoiceToSupabase = async (pdfBlob: Blob, invoiceNumber: string): Pr
 };
 
 
+const getLogoData = async (): Promise<string | null> => {
+    return new Promise((resolve) => {
+        const img = new Image();
+        img.crossOrigin = 'Anonymous';
+        img.onload = () => {
+            const canvas = document.createElement('canvas');
+            const MAX_WIDTH = 500;
+            const scale = Math.min(MAX_WIDTH / img.width, 1);
+            canvas.width = img.width * scale;
+            canvas.height = img.height * scale;
+            const ctx = canvas.getContext('2d');
+            if (ctx) {
+                ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                resolve(canvas.toDataURL('image/png'));
+            } else {
+                resolve(null);
+            }
+        };
+        img.onerror = () => resolve(null);
+        img.src = 'logo.png';
+    });
+};
+
 export const pdfService = {
     generateInvoice: async (
         bill: Bill,
@@ -66,36 +112,36 @@ export const pdfService = {
         // Header
         doc.setFontSize(20);
         doc.setFont("helvetica", "bold");
-        doc.text(settings.businessName.toUpperCase(), pageWidth / 2, 20, { align: 'center' });
+        doc.text(settings.businessName.toUpperCase(), pageWidth / 2, 20 + yOffset, { align: 'center' });
 
         doc.setFontSize(10);
         doc.setFont("helvetica", "normal");
-        doc.text(settings.address, pageWidth / 2, 28, { align: 'center' });
-        doc.text(`Contact: ${settings.contactPhone}`, pageWidth / 2, 33, { align: 'center' });
+        doc.text(settings.address, pageWidth / 2, 28 + yOffset, { align: 'center' });
+        doc.text(`Contact: ${settings.contactPhone}`, pageWidth / 2, 33 + yOffset, { align: 'center' });
 
         doc.setDrawColor(200, 200, 200);
-        doc.line(15, 40, pageWidth - 15, 40);
+        doc.line(15, 40 + yOffset, pageWidth - 15, 40 + yOffset);
 
         // Invoice Info
         doc.setFontSize(12);
         doc.setFont("helvetica", "bold");
-        doc.text("INVOICE", 15, 50);
+        doc.text("INVOICE", 15, 50 + yOffset);
 
         doc.setFontSize(10);
         doc.setFont("helvetica", "normal");
-        doc.text(`Number: #${bill.invoiceNumber}`, 15, 58);
-        doc.text(`Date: ${new Date(bill.date).toLocaleDateString()}`, 15, 63);
-        doc.text(`Payment: ${bill.paymentType}`, 15, 68);
+        doc.text(`Number: #${bill.invoiceNumber}`, 15, 58 + yOffset);
+        doc.text(`Date: ${new Date(bill.date).toLocaleDateString()}`, 15, 63 + yOffset);
+        doc.text(`Payment: ${bill.paymentType}`, 15, 68 + yOffset);
 
         // Customer Info
         if (customer) {
             doc.setFont("helvetica", "bold");
-            doc.text("BILL TO:", pageWidth - 70, 50);
+            doc.text("BILL TO:", pageWidth - 70, 50 + yOffset);
             doc.setFont("helvetica", "normal");
-            doc.text(customer.name, pageWidth - 70, 58);
-            doc.text(customer.phone, pageWidth - 70, 63);
+            doc.text(customer.name, pageWidth - 70, 58 + yOffset);
+            doc.text(customer.phone, pageWidth - 70, 63 + yOffset);
             if (customer.address) {
-                doc.text(customer.address, pageWidth - 70, 68, { maxWidth: 55 });
+                doc.text(customer.address, pageWidth - 70, 68 + yOffset, { maxWidth: 55 });
             }
         }
 
@@ -109,7 +155,7 @@ export const pdfService = {
         ]);
 
         doc.autoTable({
-            startY: 80,
+            startY: 80 + yOffset,
             head: [['Product / Service', 'Qty', 'Unit Price', 'Disc', 'Total']],
             body: tableData,
             theme: 'grid',

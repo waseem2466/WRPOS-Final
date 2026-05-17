@@ -1,6 +1,6 @@
 import { initializeApp } from "firebase/app";
 import { getAuth, type Auth } from "firebase/auth";
-import { getFirestore } from "firebase/firestore";
+import { initializeFirestore, type Firestore } from "firebase/firestore";
 import { getStorage, type FirebaseStorage } from "firebase/storage";
 import { getMessaging, isSupported } from "firebase/messaging";
 import { getAnalytics, isSupported as isAnalyticsSupported } from "firebase/analytics";
@@ -27,10 +27,13 @@ export const isFirebaseConfigured = Boolean(
 
 // Initialize Firebase only when the client config is present.
 const app: FirebaseApp | null = isFirebaseConfigured ? initializeApp(firebaseConfig) : null;
+const isElectron = typeof window !== 'undefined' && Boolean((window as any).electronAPI);
 
 // Initialize services
 export const auth: Auth | null = app ? getAuth(app) : null;
-export const db = app ? getFirestore(app) : null;
+export const db: Firestore | null = app && !isElectron ? initializeFirestore(app, {
+    experimentalForceLongPolling: true
+}) : null;
 export const storage: FirebaseStorage | null = app ? getStorage(app) : null;
 export const vertexAI = app ? getVertexAI(app) : null;
 

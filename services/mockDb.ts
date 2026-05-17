@@ -837,7 +837,6 @@ export const db: DB = {
       await SyncEngine.syncAll();
       return true;
     } catch (e) {
-      console.warn('[db] Connectivity check failed, starting in Offline Mode:', e);
       isOfflineMode = true;
       return true;
     }

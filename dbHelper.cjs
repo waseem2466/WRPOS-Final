@@ -37,11 +37,15 @@ async function searchInventory(query) {
 
     const p = getPool();
     try {
-        // Simple search by name or SKU
+        // Search both main inventory and group-logged items
         const res = await p.query(
-            `SELECT name, price, stock, category 
+            `SELECT name, price, stock, category, 'inventory' as source
              FROM "Product" 
-             WHERE name ILIKE $1 OR sku ILIKE $1 
+             WHERE name ILIKE $1 OR sku ILIKE $1
+             UNION ALL
+             SELECT name, price, stock, category, 'group' as source
+             FROM "GroupProduct"
+             WHERE name ILIKE $1
              LIMIT 5`,
             [`%${query}%`]
         );
@@ -50,7 +54,8 @@ async function searchInventory(query) {
             name: row.name,
             price: row.price,
             stock: row.stock,
-            category: row.category || 'General'
+            category: row.category || 'General',
+            source: row.source
         }));
     } catch (err) {
         console.error('[DB Helper] Search Error:', err.message);

@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { auth as firebaseAuth } from '../services/firebase';
 import { onAuthStateChanged } from 'firebase/auth';
+import { errorHandler } from '../services/errorHandler';
 
 
 interface User {
@@ -65,8 +66,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           email: firebaseUser.email || '',
           role: 'ADMIN' // Default role
         });
-        firebaseUser.getIdToken().then(setToken);
+        firebaseUser.getIdToken()
+          .then(setToken)
+          .catch((err) => {
+            errorHandler.log('Auth-Firebase', err, { operation: 'refreshIdToken' }, 'low');
+          });
       }
+      setLoading(false);
+    }, (err) => {
+      errorHandler.log('Auth-Firebase', err, { operation: 'authStateChanged' }, 'low');
       setLoading(false);
     });
 

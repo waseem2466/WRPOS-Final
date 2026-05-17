@@ -877,11 +877,6 @@ class WhatsAppBot {
                     const senderJid = isGroup ? (msg.key.participant || msg.key.remoteJid) : msg.key.remoteJid;
                     const replyTo = msg.key.remoteJid; // Always reply to the chat (group or DM)
 
-                    // Ignore WhatsApp status updates and system messages
-                    if (senderJid === 'status@broadcast' || replyTo === 'status@broadcast') {
-                        continue;
-                    }
-
                     console.log(`[Baileys] ${isGroup ? 'GROUP' : 'DM'} message from ${senderJid}: "${text}"`);
 
                     // (duplicate log removed)
@@ -945,14 +940,6 @@ class WhatsAppBot {
                                 console.error('[Owner] Command error:', err.message);
                             }
                         }
-                    }
-
-                    // Ignore messages from admins to prevent AI replying to them in groups
-                    const adminNumbers = ['0779336848', '0719336848', '0750204698'];
-                    const isFromAdmin = adminNumbers.some(num => senderJid && senderJid.includes(num));
-                    if (isFromAdmin) {
-                        console.log(`[Baileys] Skipping AI Auto-Reply for admin message from: ${senderJid}`);
-                        continue;
                     }
 
                     // Auto-reply logic

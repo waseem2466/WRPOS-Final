@@ -51,7 +51,7 @@ const viewTitles: Record<View, string> = {
 };
 
 
-const SHOP_LOGO = "https://res.cloudinary.com/wrsmile/image/upload/v1776608268/ChatGPT_Image_Apr_19_2026_07_38_26_PM_rn2v9r.png";
+const SHOP_LOGO = "/logo.png";
 
 const Logo = ({ settings, isOffline, hideText }: { settings: BusinessSettings | null, isOffline: boolean, hideText?: boolean }) => (
   <div className={`flex items-center gap-2 p-2 rounded-xl ${hideText ? 'justify-center' : ''}`}>
@@ -200,6 +200,7 @@ const AppContent = () => {
       await db.init();
       const settings = await db.settings.get();
       setBusinessSettings(settings);
+      setIsOffline(db.isOffline());
       setIsDbReady(true);
     } catch (err) {
       setIsDbReady(true);

@@ -8,8 +8,8 @@ export const whatsappService = {
     generateReceiptMessage: (bill: Bill, settings: BusinessSettings, invoiceUrl?: string): string => {
         const businessName = settings.businessName || 'WR Smile & Supplies';
         const supportPhone = settings.contactPhone || '0719336848';
-        const visibleItems = bill.items.slice(0, 8);
-        const hiddenItemCount = Math.max(0, bill.items.length - visibleItems.length);
+        const visibleItems = bill.items; // Full items, no slicing
+        const hiddenItemCount = 0;
 
         const itemsText = visibleItems.map(i => {
             const lineGross = i.price * i.quantity;
@@ -38,8 +38,12 @@ export const whatsappService = {
             `Name: N K W Khan\n` +
             `Branch: Main Branch`;
 
-        return `*${businessName}*\n` +
-            `Invoice: #${bill.invoiceNumber}\n` +
+        return `*Welcome to Smile & Supplies!* 🛒\n` +
+            `We offer a variety of online products, including kitchen accessories, home essentials, kids' items, and stationery.\n\n` +
+            `📞 Contact: 0719336848\n` +
+            `📧 Email: smileandsupplies@outlook.com\n\n` +
+            `==========================\n` +
+            `*INVOICE: #${bill.invoiceNumber}*\n` +
             `Date: ${new Date(bill.date).toLocaleDateString()}\n` +
             `Client: ${bill.customerName}\n\n` +
             `*Items*\n${itemsText || '- No items'}\n` +
@@ -48,10 +52,12 @@ export const whatsappService = {
             `${paymentLabel}: LKR ${paid.toLocaleString()}\n` +
             (balanceDue > 0.1 ? `*${balanceLabel.toUpperCase()}: LKR ${balanceDue.toLocaleString()}*\n` : `*FULLY PAID*\n`) +
             (balanceDue > 0.1 ? bankDetails : '') +
-            (invoiceUrl ? `\nInvoice PDF: ${invoiceUrl}` : '') +
-            `\n\n${settings.receiptNote || 'Thank you for shopping with us.'}` +
-            `\nHotline: ${supportPhone}` +
-            (balanceDue > 0.1 ? `\nSupport: ${GROUP_LINK}` : '');
+            (invoiceUrl ? `\n📄 Invoice PDF: ${invoiceUrl}` : '') +
+            `\n==========================\n\n` +
+            `"Explore, shop, and enjoy quality products at affordable prices. Feel free to reach out for inquiries or orders!"\n` +
+            `Follow this link to join my WhatsApp group: https://chat.whatsapp.com/K7ALigMk9ad4SBlcRUqoxX?mode=wwt\n\n` +
+            `*No Cash on delivery*\n` +
+            `*Cash deposit only*`;
     },
 
     getTemplateByLanguage: (lang: string) => {
@@ -113,10 +119,15 @@ export const whatsappService = {
         }
 
         try {
-            const response = await (window as any).electronAPI?.waQrSend?.({ to: cleanedPhone, message });
-            if (!response?.success) {
-                const errorText = response?.error || 'QR sending failed';
-                throw new Error(errorText);
+            const response = await (window as any).electronAPI?.waQrSend?.({ 
+                to: cleanedPhone, 
+                message,
+                documentUrl: options?.invoiceUrl,
+                documentName: options?.invoiceUrl ? `${Date.now()}_invoice.pdf` : undefined
+            });
+            // qrBot.sendMessage returns the message object or null on failure
+            if (!response) {
+                throw new Error('QR sending failed or bot not linked.');
             }
             return { success: true };
         } catch (qrError: unknown) {

@@ -5,6 +5,11 @@ const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
+const supabaseServiceKey = import.meta.env.VITE_SUPABASE_SERVICE_ROLE_KEY;
+export const adminSupabase = supabaseServiceKey 
+    ? createClient(supabaseUrl, supabaseServiceKey) 
+    : supabase;
+
 export const uploadProductImage = async (file: File, productId: string) => {
     try {
         const fileExt = file.name.split('.').pop();

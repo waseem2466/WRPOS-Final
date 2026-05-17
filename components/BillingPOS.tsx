@@ -287,6 +287,50 @@ export const BillingPOS: React.FC = () => {
     }
   }, [successBill]);
 
+  // ─── Keyboard Shortcuts ──────────────────────────────────────────────────────
+  useEffect(() => {
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      // F1: Focus Search
+      if (e.key === 'F1') {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+        searchInputRef.current?.select();
+      }
+
+      // F2: Checkout
+      if (e.key === 'F2') {
+        if (cart.length > 0 && !successBill && !isSaving) {
+          e.preventDefault();
+          handleCheckout();
+        }
+      }
+
+      // F3: New Sale / Clear
+      if (e.key === 'F3') {
+        e.preventDefault();
+        setCart([]);
+        setSuccessBill(null);
+        setSearch('');
+        setCashReceived('');
+        setSelectedCustomerId('');
+        searchInputRef.current?.focus();
+      }
+
+      // Escape: Close dropdowns
+      if (e.key === 'Escape') {
+        setShowProductDropdown(false);
+        setShowCustomerDropdown(false);
+        setShowQuickCust(false);
+        setShowManualService(false);
+        setShowReloadService(false);
+        setShowCheckoutMobile(false);
+      }
+    };
+
+    window.addEventListener('keydown', handleGlobalKeyDown);
+    return () => window.removeEventListener('keydown', handleGlobalKeyDown);
+  }, [cart, successBill, isSaving]);
+
   const loadData = async () => {
     const [p, c, s, b] = await Promise.all([db.products.getAll(), db.customers.getAll(), db.settings.get(), db.bills.getAll()]);
     setProducts(p); setCustomers(c); setSettings(s); setBills(b);
@@ -1064,9 +1108,13 @@ export const BillingPOS: React.FC = () => {
             
             {invoiceUrl && (
               <button 
-                onClick={() => {
-                  navigator.clipboard.writeText(invoiceUrl);
-                  alert('Invoice URL copied to clipboard!');
+                onClick={async () => {
+                  try {
+                    await navigator.clipboard.writeText(invoiceUrl);
+                    alert('Invoice URL copied to clipboard!');
+                  } catch (e) {
+                    console.warn('Clipboard failed, ignoring.');
+                  }
                 }}
                 className="w-full py-4 bg-orange-500/20 text-orange-400 border border-orange-500/30 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-orange-500 hover:text-white transition-all flex items-center justify-center gap-2"
               >
@@ -1100,11 +1148,16 @@ export const BillingPOS: React.FC = () => {
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') {
                       e.preventDefault();
-                      handleBarcodeInput(search);
+                      // If there's an exact barcode match or a filtered result, add it
+                      if (filteredProducts.length > 0) {
+                        addToCart(filteredProducts[0]);
+                      } else {
+                        handleBarcodeInput(search);
+                      }
                     }
                   }}
                   onFocus={() => { if (filteredProducts.length > 0) setShowProductDropdown(true); }}
-                  placeholder="Search, scan barcode, or scan QR..."
+                  placeholder="Search (F1) / Scan Barcode or QR..."
                   className="w-full pl-12 h-14 rounded-[1.6rem] border-white/10 bg-white/5 shadow-[0_18px_40px_rgba(2,6,23,0.45)]"
                 />
                 {showProductResults && (
@@ -1287,6 +1340,20 @@ export const BillingPOS: React.FC = () => {
                   value={customerSearch}
                   onChange={e => { setCustomerSearch(e.target.value); setShowCustomerDropdown(true); setSelectedCustomerId(''); }}
                   onFocus={() => { if (filteredCustomers.length > 0 || customerSearch.length > 2) setShowCustomerDropdown(true); }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && showCustomerDropdown) {
+                      e.preventDefault();
+                      if (filteredCustomers.length > 0) {
+                        setSelectedCustomerId(String(filteredCustomers[0].id));
+                        setCustomerSearch(filteredCustomers[0].name);
+                        setShowCustomerDropdown(false);
+                      } else if (customerSearch.length > 2) {
+                        setQuickCustForm({ name: '', phone: customerSearch.replace(/[^0-9]/g, '') });
+                        setShowQuickCust(true);
+                        setShowCustomerDropdown(false);
+                      }
+                    }
+                  }}
                   placeholder="Customer name or phone..."
                   title={customerSearch}
                   className="w-full min-w-0 pl-10 pr-3 h-10 rounded-xl border-blue-400/25 bg-black/50 shadow-[0_10px_24px_rgba(2,6,23,0.36)] text-[12px] text-white font-bold tracking-normal placeholder:text-slate-500 focus:border-blue-400 truncate"
@@ -1538,7 +1605,7 @@ export const BillingPOS: React.FC = () => {
                   className="w-full py-3.5 premium-button tap-lift bg-gradient-to-r from-blue-600 to-blue-500 text-white rounded-2xl font-black text-[10px] uppercase tracking-[0.18em] shadow-xl shadow-blue-600/20 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
                 >
                 {isSaving ? <Loader2 className="animate-spin" size={16} /> : <Check size={16} />}
-                {posMode === 'SALE' ? 'Authorize Sale' : 'Complete Return'}
+                {posMode === 'SALE' ? 'Authorize Sale (F2)' : 'Complete Return (F2)'}
               </button>
 
               <div className="grid grid-cols-2 gap-2">
@@ -1548,7 +1615,7 @@ export const BillingPOS: React.FC = () => {
                 >
                   <RotateCw size={12} /> Returns
                 </button>
-                <button onClick={() => setCart([])} className="py-2 premium-chip tap-lift bg-red-500/5 text-red-500/60 border border-red-500/10 rounded-lg font-black text-[8px] uppercase tracking-[0.14em] hover:bg-red-500/10 transition-all">Reset</button>
+                <button onClick={() => setCart([])} className="py-2 premium-chip tap-lift bg-red-500/5 text-red-500/60 border border-red-500/10 rounded-lg font-black text-[8px] uppercase tracking-[0.14em] hover:bg-red-500/10 transition-all">Reset (F3)</button>
               </div>
 
               {posMode === 'RETURN' && selectedBillForReturn && (
@@ -1942,7 +2009,7 @@ export const BillingPOS: React.FC = () => {
                   <div className="space-y-1">
                     <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest ml-1">Sell Price *</label>
                     <div className="relative">
-                      <TrendingUp className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" size={14} />
+                      <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" size={14} />
                       <input
                         type="number"
                         value={manualProductForm.sellPrice}

@@ -4,6 +4,19 @@ import { errorHandler } from './errorHandler';
 
 const isElectron = typeof window !== 'undefined' && (window as any).electronAPI;
 
+const isExpectedOfflineError = (error: Error) => {
+  const message = error.message.toLowerCase();
+  return (
+    message.includes('connection terminated') ||
+    message.includes('connection timeout') ||
+    message.includes('network') ||
+    message.includes('enotfound') ||
+    message.includes('econnrefused') ||
+    message.includes('timed out') ||
+    message.includes('timeout')
+  );
+};
+
 // IPC wrapper for Electron
 class ElectronPoolWrapper {
   private clientId: string | null = null;
@@ -24,7 +37,9 @@ class ElectronPoolWrapper {
       return this.createMockClient(this.clientId) as unknown as PoolClient;
     } catch (e: unknown) {
       const err = e instanceof Error ? e : new Error(String(e));
-      errorHandler.log('Database', err, { operation: 'connect' }, 'high');
+      if (!isExpectedOfflineError(err)) {
+        errorHandler.log('Database', err, { operation: 'connect' }, 'high');
+      }
       throw err;
     }
   }
@@ -51,7 +66,9 @@ class ElectronPoolWrapper {
       return result;
     } catch (e: unknown) {
       const err = e instanceof Error ? e : new Error(String(e));
-      errorHandler.log('Database', err, { operation: 'query', query: text }, 'high');
+      if (!isExpectedOfflineError(err)) {
+        errorHandler.log('Database', err, { operation: 'query', query: text }, 'high');
+      }
       throw err;
     }
   }
@@ -70,7 +87,7 @@ export const pool = isElectron
   ? (new ElectronPoolWrapper() as unknown as PgPool)
   : (new NeonPool({ 
       connectionString: databaseUrl,
-      connectionTimeoutMillis: 15000, // Wait 15s for "Wake Up"
+      connectionTimeoutMillis: 30000, // Wait 30s for "Wake Up"
       max: 20,
       idleTimeoutMillis: 30000,
     }) as unknown as PgPool);
@@ -103,9 +120,10 @@ export const checkDatabaseHealth = async (): Promise<boolean> => {
     client.release();
     return true;
   } catch (e: unknown) {
-    const err = e instanceof Error ? e : new Error(String(err));
-    errorHandler.log('Database', err, { operation: 'healthCheck' }, 'critical');
+    const err = e instanceof Error ? e : new Error(String(e));
+    if (!isExpectedOfflineError(err)) {
+      errorHandler.log('Database', err, { operation: 'healthCheck' }, 'critical');
+    }
     return false;
   }
 };
-

@@ -125,8 +125,8 @@ Input: "${input}"
         try {
             const response = await this.safeExecute(prompt, 'Intent Parsing', 80);
 
-            // Check if response is a failure message
-            if (response.startsWith('⚠️')) {
+            // Check if response is a failure message from IPC or safeExecute
+            if (response.startsWith('⚠️') || response.startsWith('AI Connection Failed') || response.startsWith('AI Service Unavailable')) {
                 throw new Error(response);
             }
 
