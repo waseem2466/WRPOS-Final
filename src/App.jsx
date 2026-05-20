@@ -1,37 +1,37 @@
 import { useEffect } from 'react';
-import './index.css'; // Import Tailwind CSS
+import { Routes, Route, NavLink } from 'react-router-dom';
+import './index.css';
 import Inbox from './pages/Inbox';
+import Products from './pages/Products';
 
 const { ipcRenderer } = window.electron;
 
 function App() {
-
-  // Optional: Handle global errors or lifecycle events from main process
   useEffect(() => {
     const handleAppError = (event, errorInfo) => {
       console.error('App Error from Main Process:', errorInfo);
-      // Implement UI notification for errors if desired
     };
-
     const handleAppClose = () => {
       console.log('App closing, performing cleanup...');
-      // You might send an IPC message here if main process needs to know
     };
-
     ipcRenderer.on('app-error', handleAppError);
-    // Example for window close event if needed, though usually handled by main process
-    // window.addEventListener('beforeunload', handleAppClose);
-
-    // Clean up listeners
     return () => {
       ipcRenderer.removeListener('app-error', handleAppError);
-      // window.removeEventListener('beforeunload', handleAppClose);
     };
   }, []);
 
   return (
     <div className="App h-screen flex flex-col">
-      <Inbox />
+      <nav className="bg-gray-800 text-white flex gap-4 px-6 py-3 border-b border-gray-700">
+        <NavLink to="/" className={({ isActive }) => isActive ? 'text-blue-400 font-bold' : 'hover:text-blue-300'}>Chat</NavLink>
+        <NavLink to="/products" className={({ isActive }) => isActive ? 'text-blue-400 font-bold' : 'hover:text-blue-300'}>Products</NavLink>
+      </nav>
+      <div className="flex-1 overflow-hidden">
+        <Routes>
+          <Route path="/" element={<Inbox />} />
+          <Route path="/products" element={<Products />} />
+        </Routes>
+      </div>
     </div>
   );
 }
