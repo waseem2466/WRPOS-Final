@@ -232,6 +232,7 @@ const connectionString = process.env.DATABASE_URL;
 const pools = new Map();
 let sqlitePool = null;
 const useSqlite = process.env.WRPOS_DB_DRIVER !== 'postgres';
+const hasWhatsAppRelay = () => Boolean(process.env.WHATSAPP_RELAY_URL && process.env.WHATSAPP_RELAY_SECRET);
 const NEON_IMPORT_TABLES = [
     'AppUser',
     'Settings',
@@ -1464,13 +1465,24 @@ app.whenReady().then(async () => {
     webhookServer.setWindow(mainWindow);
     webhookServer.start();
     qrBot.setWindow(mainWindow);
-    qrBot.init();
+    if (hasWhatsAppRelay()) {
+        console.log('[WhatsApp] Koyeb relay configured; local QR bot disabled to avoid linked-device conflict.');
+    } else {
+        qrBot.init();
+    }
 
     // IPC Handlers
     ipcMain.handle('wa-get-status', () => ({ state: qrBot.state, qr: qrBot.qr }));
     ipcMain.handle('wa-link', async () => {
         console.log('[IPC] wa-link handler called');
         try {
+            if (hasWhatsAppRelay()) {
+                return {
+                    success: false,
+                    state: 'DISABLED',
+                    error: 'WhatsApp is handled by the Koyeb relay. Local QR linking is disabled to avoid conflict.'
+                };
+            }
             await qrBot.logout();
             console.log('[IPC] Previous session cleared, initializing new connection...');
             qrBot.init(); // Start async initialization
@@ -1490,7 +1502,12 @@ app.whenReady().then(async () => {
         }
     });
     ipcMain.handle('wa-logout', () => qrBot.logout());
-    ipcMain.handle('wa-qr-send', async (e, data) => qrBot.sendMessage(data.to, data.message));
+    ipcMain.handle('wa-qr-send', async (e, data) => {
+        if (hasWhatsAppRelay()) {
+            return null;
+        }
+        return qrBot.sendMessage(data.to, data.message);
+    });
     ipcMain.handle('wa-relay-send', async (e, data) => {
         try {
             const relayUrl = (process.env.WHATSAPP_RELAY_URL || '').replace(/\/$/, '');
