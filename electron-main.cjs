@@ -232,16 +232,36 @@ const connectionString = process.env.DATABASE_URL;
 const pools = new Map();
 let sqlitePool = null;
 const useSqlite = process.env.WRPOS_DB_DRIVER !== 'postgres';
+const NEON_IMPORT_TABLES = [
+    'AppUser',
+    'Settings',
+    'Supplier',
+    'Product',
+    'Customer',
+    'Bill',
+    'BillItem',
+    'ReturnRecord',
+    'Expense',
+    'MonthlySummary',
+    'PurchaseOrder',
+    'Payment',
+    'SupplierPayment',
+    'ProductRequest',
+    'WhatsAppMessage',
+    'GroupProduct'
+];
+const NEON_IMPORT_EMPTY_CHECK_TABLES = [
+    'Supplier',
+    'Product',
+    'Customer',
+    'Bill',
+    'BillItem',
+    'PurchaseOrder',
+    'Payment',
+    'Expense'
+];
 
-function getPool(id = 'default') {
-    if (useSqlite) {
-        if (!sqlitePool) {
-            sqlitePool = new SqliteBridge({ app });
-            console.log('[DB] SQLite local database enabled.');
-        }
-        return sqlitePool;
-    }
-
+function createPostgresPool(id = 'default') {
     if (!pools.has(id)) {
         const newPool = new Pool({
             connectionString,
@@ -260,6 +280,75 @@ function getPool(id = 'default') {
         pools.set(id, newPool);
     }
     return pools.get(id);
+}
+
+async function maybeImportNeonDataToSqlite(sqliteBridge) {
+    if (!connectionString) {
+        console.log('[DB] SQLite import skipped: DATABASE_URL is not configured.');
+        return;
+    }
+
+    if (process.env.WRPOS_DISABLE_NEON_IMPORT === 'true') {
+        console.log('[DB] SQLite import skipped: Neon import is disabled.');
+        return;
+    }
+
+    const forceImport = process.env.WRPOS_IMPORT_NEON_ON_START === 'true';
+    const localIsEmpty = sqliteBridge.isEmptyAcrossTables(NEON_IMPORT_EMPTY_CHECK_TABLES);
+    if (!forceImport && !localIsEmpty) {
+        console.log(`[DB] SQLite import skipped: local database already has data at ${sqliteBridge.dbPath}.`);
+        return;
+    }
+
+    const importPool = new Pool({
+        connectionString,
+        ssl: connectionString.includes('neon.tech') ? { rejectUnauthorized: false } : false,
+        connectionTimeoutMillis: 8000,
+        query_timeout: 30000,
+        max: 2
+    });
+
+    try {
+        console.log('[DB] Importing existing Neon data into local SQLite...');
+        let totalRows = 0;
+
+        for (const table of NEON_IMPORT_TABLES) {
+            try {
+                const result = await importPool.query(`SELECT * FROM "${table}"`);
+                const inserted = sqliteBridge.upsertRows(table, result.rows);
+                totalRows += inserted;
+                console.log(`[DB] Imported ${inserted} row(s) from Neon table ${table}.`);
+            } catch (tableError) {
+                console.warn(`[DB] Skipped Neon table ${table}: ${tableError.message}`);
+            }
+        }
+
+        console.log(`[DB] Neon import complete. ${totalRows} row(s) copied to ${sqliteBridge.dbPath}.`);
+    } catch (error) {
+        console.warn('[DB] Neon import failed; continuing with local SQLite:', error.message);
+    } finally {
+        await importPool.end().catch(() => undefined);
+    }
+}
+
+function getPool(id = 'default') {
+    if (useSqlite) {
+        if (!sqlitePool) {
+            sqlitePool = new SqliteBridge({ app });
+            const baseReady = sqlitePool.ready;
+            sqlitePool.ready = baseReady.then(async () => {
+                try {
+                    await maybeImportNeonDataToSqlite(sqlitePool);
+                } catch (error) {
+                    console.warn('[DB] Startup Neon import failed; continuing with SQLite:', error.message);
+                }
+            });
+            console.log('[DB] SQLite local database enabled.');
+        }
+        return sqlitePool;
+    }
+
+    return createPostgresPool(id);
 }
 
 async function saveWhatsAppMessage({ id, from, to, text, type, method }) {
@@ -1402,6 +1491,44 @@ app.whenReady().then(async () => {
     });
     ipcMain.handle('wa-logout', () => qrBot.logout());
     ipcMain.handle('wa-qr-send', async (e, data) => qrBot.sendMessage(data.to, data.message));
+    ipcMain.handle('wa-relay-send', async (e, data) => {
+        try {
+            const relayUrl = (process.env.WHATSAPP_RELAY_URL || '').replace(/\/$/, '');
+            const relaySecret = process.env.WHATSAPP_RELAY_SECRET || '';
+            if (!relayUrl || !relaySecret) {
+                return { success: false, error: 'WhatsApp relay is not configured' };
+            }
+
+            const response = await fetch(`${relayUrl}/send`, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${relaySecret}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    to: data.to,
+                    message: data.message,
+                    documentUrl: data.documentUrl,
+                    documentName: data.documentName
+                })
+            });
+            const result = await response.json().catch(() => ({}));
+            if (response.ok && result.success) {
+                await saveWhatsAppMessage({
+                    id: result.id,
+                    from: 'me',
+                    to: data.to,
+                    text: data.message,
+                    type: 'text',
+                    method: 'relay'
+                });
+                return { success: true, id: result.id };
+            }
+            return { success: false, error: result.error || `Relay returned ${response.status}` };
+        } catch (error) {
+            return { success: false, error: error.message || 'WhatsApp relay send failed' };
+        }
+    });
     ipcMain.handle('wa-qr-test', async (e, data) => {
         try {
             const result = await qrBot.sendMessage(data.to, '✅ WR POS Bot is active and responding!');

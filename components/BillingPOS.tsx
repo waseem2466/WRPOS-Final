@@ -26,6 +26,72 @@ const printCopyRateForPages = (pages: number) => {
   return 8;
 };
 
+const DEMO_LANKAQR = "00020101021126450013lk.lankapay.q101180000000000000000000216MERCHANT_ID5204591253031445802LK5911WR Pharmacy6007Kantale6304";
+
+const calculateEMVCoCRC16 = (data: string): string => {
+  let crc = 0xFFFF;
+  const polynomial = 0x1021;
+  for (let i = 0; i < data.length; i++) {
+    crc ^= (data.charCodeAt(i) << 8);
+    for (let j = 0; j < 8; j++) {
+      if ((crc & 0x8000) !== 0) {
+        crc = ((crc << 1) ^ polynomial) & 0xFFFF;
+      } else {
+        crc = (crc << 1) & 0xFFFF;
+      }
+    }
+  }
+  return crc.toString(16).toUpperCase().padStart(4, '0');
+};
+
+const parseEMVCo = (qrString: string): Record<string, string> => {
+  const tags: Record<string, string> = {};
+  let i = 0;
+  while (i < qrString.length) {
+    if (i + 4 > qrString.length) break;
+    const tag = qrString.substring(i, i + 2);
+    const length = parseInt(qrString.substring(i + 2, i + 4), 10);
+    if (isNaN(length)) break;
+    const value = qrString.substring(i + 4, i + 4 + length);
+    tags[tag] = value;
+    i += 4 + length;
+  }
+  return tags;
+};
+
+const buildEMVCo = (tags: Record<string, string>): string => {
+  let result = '';
+  const keys = Object.keys(tags).filter(k => k !== '63').sort();
+  for (const key of keys) {
+    const val = tags[key];
+    const len = val.length.toString().padStart(2, '0');
+    result += `${key}${len}${val}`;
+  }
+  result += '6304';
+  const crc = calculateEMVCoCRC16(result);
+  return result + crc;
+};
+
+const makeDynamicLankaQR = (staticQr: string, amount: number, invoiceNum: string): string => {
+  try {
+    const tags = parseEMVCo(staticQr);
+    tags['01'] = '12';
+    tags['54'] = amount.toFixed(2);
+    if (!tags['53']) tags['53'] = '144';
+    if (!tags['58']) tags['58'] = 'LK';
+
+    const billValue = invoiceNum.trim();
+    const subTag = '01';
+    const subLen = billValue.length.toString().padStart(2, '0');
+    tags['62'] = `${subTag}${subLen}${billValue}`;
+
+    return buildEMVCo(tags);
+  } catch (e) {
+    console.error('Error generating dynamic LANKAQR', e);
+    return staticQr;
+  }
+};
+
 const addWarrantyPeriod = (start: Date, amount = 0, unit: 'MONTHS' | 'YEARS' = 'YEARS') => {
   const end = new Date(start);
   if (unit === 'MONTHS') end.setMonth(end.getMonth() + amount);
@@ -213,6 +279,9 @@ export const BillingPOS: React.FC = () => {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [settings, setSettings] = useState<BusinessSettings | any>(null);
   const [invoiceUrl, setInvoiceUrl] = useState<string | null>(null);
+  const [showLankaQrModal, setShowLankaQrModal] = useState(false);
+  const [lankaQrString, setLankaQrString] = useState('');
+  const [lankaQrIsDemo, setLankaQrIsDemo] = useState(false);
 
   const [search, setSearch] = useState('');
   const [customerSearch, setCustomerSearch] = useState('');
@@ -524,6 +593,23 @@ export const BillingPOS: React.FC = () => {
     setShowProductDropdown(false);
     // Maintain focus for next scan
     searchInputRef.current?.focus();
+  };
+
+  const handleGenerateLankaQR = () => {
+    const savedString = localStorage.getItem('pos_lanka_qr_string');
+    const invoiceNum = `INV-TEMP-${Date.now().toString().slice(-6)}`;
+    const amount = totals.total;
+
+    if (!savedString) {
+      setLankaQrIsDemo(true);
+      const dynamicQR = makeDynamicLankaQR(DEMO_LANKAQR, amount, invoiceNum);
+      setLankaQrString(dynamicQR);
+    } else {
+      setLankaQrIsDemo(false);
+      const dynamicQR = makeDynamicLankaQR(savedString, amount, invoiceNum);
+      setLankaQrString(dynamicQR);
+    }
+    setShowLankaQrModal(true);
   };
 
   const saveCustomerItemRequest = async () => {
@@ -1596,6 +1682,18 @@ export const BillingPOS: React.FC = () => {
                   <GlassInput type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} className="w-full h-10 py-2 rounded-xl text-[12px]" />
                 </div>
               )}
+
+              {/* LankaQR Quickpay Option */}
+              <div className="pt-2">
+                <button
+                  type="button"
+                  onClick={handleGenerateLankaQR}
+                  disabled={cart.length === 0}
+                  className="w-full py-2.5 rounded-xl border border-emerald-500/25 bg-emerald-500/10 text-emerald-400 font-black text-[9px] uppercase tracking-widest hover:bg-emerald-500/20 active:scale-95 transition-all flex items-center justify-center gap-1.5 disabled:opacity-40"
+                >
+                  <QrCode size={13} className="text-emerald-400" /> LankaQR Dynamic Pay
+                </button>
+              </div>
             </div>
 
             <div className="p-3.5 bg-black/60 border-t border-white/5 space-y-2">
@@ -2119,6 +2217,76 @@ export const BillingPOS: React.FC = () => {
           </div>
         )
       }
+
+      {/* LankaQR Dynamic Pay Modal */}
+      {showLankaQrModal && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/90 backdrop-blur-md animate-in fade-in duration-300">
+          <GlassCard className="w-full max-w-sm p-6 text-center border-emerald-500/20 rounded-[2rem] sm:rounded-[2.5rem] animate-in zoom-in-95" style={{
+            background: 'linear-gradient(135deg, rgba(16, 185, 129, 0.12) 0%, rgba(5, 150, 105, 0.05) 100%)',
+          }}>
+            <div className="flex justify-between items-center mb-6">
+              <span className="text-[9px] font-black uppercase text-emerald-400 tracking-[0.2em]">LANKAQR Dynamic Pay</span>
+              <button 
+                onClick={() => setShowLankaQrModal(false)} 
+                className="p-1.5 text-slate-500 hover:text-white bg-white/5 hover:bg-white/10 rounded-lg transition-all"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            {lankaQrIsDemo && (
+              <div className="mb-4 px-3 py-2 bg-orange-500/15 border border-orange-500/25 rounded-xl text-left">
+                <p className="text-[9px] text-orange-300 font-black uppercase tracking-wider">Demo Mode Active</p>
+                <p className="text-[8px] text-slate-400 font-medium uppercase mt-0.5 tracking-wide leading-relaxed">
+                  Go to POS Settings to paste your bank's static LankaQR string. Showing test QR.
+                </p>
+              </div>
+            )}
+
+            <div className="space-y-4">
+              <div>
+                <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-0.5">Amount to Charge</p>
+                <p className="text-2xl font-black font-mono text-white tracking-tighter">LKR {totals.total.toLocaleString()}</p>
+              </div>
+
+              {/* QR Code Wrapper */}
+              <div className="w-56 h-56 bg-white p-3 rounded-2xl mx-auto border border-white/10 flex items-center justify-center shadow-2xl relative group">
+                <img
+                  src={`https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(lankaQrString)}`}
+                  alt="LankaQR"
+                  className="w-full h-full object-contain"
+                />
+              </div>
+
+              <div className="text-center px-4 space-y-1">
+                <p className="text-[9px] text-slate-400 font-bold uppercase tracking-wider">Scan with any LankaQR App</p>
+                <p className="text-[8px] text-slate-500 font-medium uppercase tracking-wide leading-relaxed">
+                  FriMi, Genie, solo, iPay, ComBank Flash, GPay or any local banking app
+                </p>
+              </div>
+
+              <div className="flex gap-2.5 pt-3">
+                <button
+                  onClick={() => {
+                    setCashReceived(totals.total);
+                    setShowLankaQrModal(false);
+                    audioService.playSuccess();
+                  }}
+                  className="flex-1 py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-black uppercase text-[9px] tracking-widest shadow-xl shadow-emerald-600/10 active:scale-95 transition-all flex items-center justify-center gap-1.5"
+                >
+                  <Check size={14} /> Payment Received
+                </button>
+                <button
+                  onClick={() => setShowLankaQrModal(false)}
+                  className="py-3 px-4 bg-white/5 border border-white/10 text-white rounded-xl font-black uppercase text-[9px] tracking-widest hover:bg-white/10 active:scale-95 transition-all"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </GlassCard>
+        </div>
+      )}
     </div >
   );
 };

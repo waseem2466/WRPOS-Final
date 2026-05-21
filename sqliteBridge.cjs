@@ -66,6 +66,10 @@ function normalizeRows(rows) {
   });
 }
 
+function quoteIdentifier(identifier) {
+  return `"${String(identifier).replace(/"/g, '""')}"`;
+}
+
 function translateSql(sql, params = []) {
   const translatedParams = [];
   let text = String(sql);
@@ -155,6 +159,64 @@ class SqliteBridge {
   save() {
     const data = this.db.export();
     fs.writeFileSync(this.dbPath, Buffer.from(data));
+  }
+
+  getTableColumns(table) {
+    const info = this.db.exec(`PRAGMA table_info(${quoteIdentifier(table)})`);
+    if (!info[0]) return [];
+    const nameIndex = info[0].columns.indexOf('name');
+    return info[0].values.map((row) => row[nameIndex]);
+  }
+
+  countRowsNow(table) {
+    const result = this.db.exec(`SELECT COUNT(*) AS count FROM ${quoteIdentifier(table)}`);
+    return Number(result[0]?.values?.[0]?.[0] || 0);
+  }
+
+  isEmptyAcrossTables(tables) {
+    return tables.every((table) => this.countRowsNow(table) === 0);
+  }
+
+  upsertRows(table, rows = []) {
+    if (!Array.isArray(rows) || rows.length === 0) return 0;
+
+    const allowedColumns = new Set(this.getTableColumns(table));
+    if (allowedColumns.size === 0) return 0;
+
+    let inserted = 0;
+    this.db.run('BEGIN');
+    try {
+      for (const row of rows) {
+        const columns = Object.keys(row).filter((column) => allowedColumns.has(column));
+        if (columns.length === 0) continue;
+
+        const values = columns.map((column) => normalizeValue(row[column]));
+        const quotedColumns = columns.map(quoteIdentifier);
+        const placeholders = columns.map(() => '?').join(', ');
+        const updateColumns = columns.filter((column) => column !== 'id');
+        const conflictClause = columns.includes('id')
+          ? ` ON CONFLICT("id") DO UPDATE SET ${updateColumns.length
+              ? updateColumns.map((column) => `${quoteIdentifier(column)} = excluded.${quoteIdentifier(column)}`).join(', ')
+              : '"id" = excluded."id"'}`
+          : '';
+        const sql = `INSERT INTO ${quoteIdentifier(table)} (${quotedColumns.join(', ')}) VALUES (${placeholders})${conflictClause}`;
+        const stmt = this.db.prepare(sql);
+        try {
+          stmt.bind(values);
+          stmt.step();
+          inserted += 1;
+        } finally {
+          stmt.free();
+        }
+      }
+      this.db.run('COMMIT');
+      this.save();
+    } catch (error) {
+      this.db.run('ROLLBACK');
+      throw error;
+    }
+
+    return inserted;
   }
 
   async query(sql, params = []) {

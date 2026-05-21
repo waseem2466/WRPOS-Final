@@ -14,9 +14,9 @@ const cleanupOldInvoices = async () => {
         const fourteenDaysAgo = new Date();
         fourteenDaysAgo.setDate(fourteenDaysAgo.getDate() - 14);
 
-        const filesToDelete = files
-            .filter(f => new Date(f.created_at) < fourteenDaysAgo)
-            .map(f => f.name);
+const filesToDelete = files
+    .filter(f => f.created_at && new Date(f.created_at) < fourteenDaysAgo)
+    .map(f => f.name);
 
         if (filesToDelete.length > 0) {
             await adminSupabase.storage.from('invoices').remove(filesToDelete);
@@ -108,6 +108,7 @@ export const pdfService = {
         const doc = new jsPDF() as any;
 
         const pageWidth = doc.internal.pageSize.width;
+        let yOffset = 0;
 
         // Header
         doc.setFontSize(20);

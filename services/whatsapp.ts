@@ -119,6 +119,23 @@ export const whatsappService = {
         }
 
         try {
+            const response = await (window as any).electronAPI?.waRelaySend?.({
+                to: cleanedPhone,
+                message,
+                documentUrl: options?.invoiceUrl,
+                documentName: options?.invoiceUrl ? `${Date.now()}_invoice.pdf` : undefined
+            });
+            if (response?.success) return { success: true };
+            if (response?.error && response.error !== 'WhatsApp relay is not configured') {
+                cloudError = cloudError ? `${cloudError}. Relay failed: ${response.error}` : `Relay failed: ${response.error}`;
+            }
+        } catch (e: unknown) {
+            const err = e instanceof Error ? e : new Error(String(e));
+            cloudError = cloudError ? `${cloudError}. Relay failed: ${err.message}` : `Relay failed: ${err.message}`;
+            errorHandler.log('WhatsApp', err, { operation: 'sendDirect', type: 'relay' }, 'medium');
+        }
+
+        try {
             const response = await (window as any).electronAPI?.waQrSend?.({ 
                 to: cleanedPhone, 
                 message,

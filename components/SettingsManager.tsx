@@ -11,7 +11,7 @@ import {
   Database, Download, FileSpreadsheet,
   HardDrive, Activity, ShieldCheck, ShieldAlert,
   Trash2, Terminal, FileJson, Users, ShoppingCart, Package, Wallet,
-  UploadCloud, Smartphone
+  UploadCloud, Smartphone, QrCode
 } from 'lucide-react';
 
 export const SettingsManager: React.FC = () => {
@@ -21,10 +21,12 @@ export const SettingsManager: React.FC = () => {
   const [isExporting, setIsExporting] = useState<string | null>(null);
   const [isBackingUp, setIsBackingUp] = useState(false);
   const [isRestoring, setIsRestoring] = useState(false);
+  const [lankaQrString, setLankaQrString] = useState('');
   const restoreInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     loadSettings();
+    setLankaQrString(localStorage.getItem('pos_lanka_qr_string') || '');
   }, []);
 
   const loadSettings = async () => {
@@ -38,6 +40,7 @@ export const SettingsManager: React.FC = () => {
     setIsSaving(true);
     try {
       await db.settings.update(settings);
+      localStorage.setItem('pos_lanka_qr_string', lankaQrString);
 
       setShowSuccess(true);
       setTimeout(() => setShowSuccess(false), 3000);
@@ -526,6 +529,37 @@ timeout /t 5`;
                         </button>
                       </div>
                     </div>
+                  </div>
+                </section>
+
+                {/* Section: LANKAQR Payments */}
+                <section className="space-y-6">
+                  <div className="flex items-center gap-4 border-b border-white/5 pb-4">
+                    <div className="w-12 h-12 bg-emerald-600/20 text-emerald-400 rounded-xl flex items-center justify-center border border-emerald-500/10">
+                      <QrCode size={24} className="text-emerald-400" />
+                    </div>
+                    <div>
+                      <h3 className="text-base font-black text-white uppercase tracking-tight">LANKAQR Payments</h3>
+                      <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">Dynamic Counter QR Payments (LKR)</p>
+                    </div>
+                  </div>
+
+                  <div className="space-y-4">
+                    <div className="p-4 bg-emerald-500/5 border border-emerald-500/15 rounded-2xl">
+                      <p className="text-[10px] text-emerald-400 font-black uppercase tracking-wider mb-1.5">How to get your Merchant Payload:</p>
+                      <ol className="list-decimal pl-4 text-[9px] text-slate-400 space-y-1 font-bold uppercase tracking-wide">
+                        <li>Scan your bank's printed static LANKAQR poster using a QR reader app on your phone.</li>
+                        <li>Copy the raw text (it starts with <span className="text-emerald-300 font-mono">000201010211...</span>).</li>
+                        <li>Paste that exact string below. The POS will dynamically generate codes with active bill amount and invoice number!</li>
+                      </ol>
+                    </div>
+                    <GlassInput
+                      label="Merchant Static LANKAQR Payload"
+                      value={lankaQrString}
+                      onChange={e => setLankaQrString(e.target.value)}
+                      placeholder="e.g. 00020101021126430013lk.lankapay.q1..."
+                      className="text-xs font-mono text-emerald-300"
+                    />
                   </div>
                 </section>
 

@@ -59,6 +59,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     waGetWebhookUrl: () => ipcRenderer.invoke('wa-get-webhook-url'),
     // QR Bot Additional Bridge
     waQrSend: (payload) => ipcRenderer.invoke('wa-qr-send', payload),
+    waRelaySend: (payload) => ipcRenderer.invoke('wa-relay-send', payload),
     waQrTest: (payload) => ipcRenderer.invoke('wa-qr-test', payload),
     onWaQrMessage: (callback) => {
         const sub = (_, data) => callback(data);
