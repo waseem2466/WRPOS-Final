@@ -630,8 +630,9 @@ async function connectToWhatsApp() {
                 const groupLink = require('./shopData.cjs').whatsappGroupLink;
                 const WATCHED_GROUPS = (process.env.WATCHED_GROUPS || 'smile and supplies').split(',').map(g => g.trim().toLowerCase());
                 let groupJid = null;
+                // Find the Smile & Supplies group JID
                 for (const [jid, name] of knownGroups) {
-                    if (WATCHED_GROUPS.some(wg => name.toLowerCase().includes(wg))) {
+                    if (name.toLowerCase().includes('smile') && name.toLowerCase().includes('supplies')) {
                         groupJid = jid;
                         break;
                     }
@@ -641,14 +642,15 @@ async function connectToWhatsApp() {
                     try {
                         await sock.groupParticipantsUpdate(groupJid, [senderJid], 'add');
                         added = true;
+                        console.log(`[Group] Auto-added ${senderJid} to Smile & Supplies`);
                     } catch (e) {
                         console.log(`[Group] Auto-add failed for ${senderJid}: ${e.message}`);
                     }
                 }
                 if (added) {
-                    await sock.sendMessage(replyTo, { text: `✅ You've been added to *Smile & Supplies* group!\n\nCheck your WhatsApp groups for the new invite.` });
+                    await sock.sendMessage(replyTo, { text: `✅ You've been added to *Smile & Supplies* group!\n\nCheck your WhatsApp groups.` });
                 } else {
-                    await sock.sendMessage(replyTo, { text: `👥 *Join Our Group*\n\nTap the link below to join *Smile & Supplies*:\n${groupLink}\n\nIf the link doesn't work, ask the admin to add you manually.` });
+                    await sock.sendMessage(replyTo, { text: `👥 *Join Our Group*\n\nTap the link to join *Smile & Supplies*:\n${groupLink}\n\nOr ask the admin to add you manually.` });
                 }
                 continue;
             }
