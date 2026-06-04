@@ -1,18 +1,21 @@
 /**
  * Group Inviter — WR POS WhatsApp Bot
- * Sends DM with group link to members from source groups.
- * Limits: 20 DMs/day with 30-60s delay between sends.
+ * Extracts all members from source groups, sends fresh invite DMs.
+ * Limits: 20 DMs/day with 35-60s delay between sends.
  */
 
+const shop = require('./shopData.cjs');
+
 const DAILY_LIMIT = parseInt(process.env.GROUP_INVITE_LIMIT || '20');
-const SEND_DELAY_MS = 35000; // 35 seconds between DMs
-const GROUP_LINK = 'https://chat.whatsapp.com/K7ALigMk9ad4SBlcRUqoxX?mode=wwt';
+const SEND_DELAY_MS = 35000;
+const GROUP_LINK = shop.whatsappGroupLink;
 
 let sentToday = new Set();
 let sendCount = 0;
 let lastResetDate = new Date().toDateString();
 let isProcessing = false;
 let pendingInvites = [];
+const invitedPhones = new Set(); // all-time dedup
 
 function resetIfNeeded() {
     const today = new Date().toDateString();
@@ -24,18 +27,92 @@ function resetIfNeeded() {
     }
 }
 
-function canSend() {
-    resetIfNeeded();
-    return sendCount < DAILY_LIMIT;
+function buildInviteMessage(name) {
+    return `🎉 *Welcome to WR Smile & Supplies!*
+
+Hi ${name}! 👋
+
+We noticed you're part of our local community and wanted to introduce ourselves.
+
+*Who we are:*
+📍 Mullipothana 96, Kandy Road, Trincomalee District
+🕐 Open 8:00 AM – 8:00 PM (Every day)
+
+*What we offer:*
+📱 Phone accessories — cases, chargers, earphones, screen guards
+🍳 Kitchen appliances — cookware, storage, utensils
+📚 Stationery — notebooks, pens, art supplies
+💄 Cosmetics — skincare, makeup, personal care
+🎁 Gifts & ornaments — birthday, wedding, special occasions
+🖨️ Photocopy & printing — documents, banners, cards
+
+*Why join our group?*
+✅ Daily deals & flash sales
+✅ New product announcements
+✅ Exclusive member discounts
+✅ Direct ordering via WhatsApp
+✅ Free delivery on select items
+
+*How to order:*
+1. Browse our group for products
+2. Reply with the item name + quantity
+3. We'll confirm and send payment details
+4. Bank transfer or pay in-store
+5. We deliver island-wide! 🚚
+
+*Bank Details:*
+🏦 BOC (Bank of Ceylon)
+ Account: 95733864
+ Name: N K W Khan
+
+📞 Contact: ${shop.phoneNumbers.join(' | ')}
+
+👇 *Tap below to join our group:*
+${GROUP_LINK}
+
+See you there! 🛍️`;
 }
 
-function getRemaining() {
-    resetIfNeeded();
-    return Math.max(0, DAILY_LIMIT - sendCount);
-}
+async function extractAndInvite(sock, sourceGroupJid, sourceGroupName) {
+    console.log(`[GroupInviter] Extracting members from "${sourceGroupName}"...`);
 
-function wasAlreadyInvited(phone) {
-    return sentToday.has(phone);
+    let members = [];
+    try {
+        const metaData = await sock.groupMetadata(sourceGroupJid);
+        members = metaData.participants || [];
+        console.log(`[GroupInviter] Found ${members.length} members in "${sourceGroupName}"`);
+    } catch (e) {
+        console.error(`[GroupInviter] Failed to get group metadata: ${e.message}`);
+        return { success: false, error: e.message };
+    }
+
+    // Filter out: bot itself, owners, already invited
+    const ownerNumbers = ['0719336848', '0779336848', '0750204698'];
+    const eligible = members.filter(m => {
+        const phone = m.id.replace(/@.*$/, '').replace(/[^0-9]/g, '');
+        if (!phone || phone.length < 8) return false;
+        if (ownerNumbers.some(o => phone.includes(o))) return false;
+        if (invitedPhones.has(phone)) return false;
+        if (sentToday.has(phone)) return false;
+        return true;
+    });
+
+    console.log(`[GroupInviter] ${eligible.length} eligible members to invite`);
+
+    // Queue all eligible members
+    for (const member of eligible) {
+        const phone = member.id.replace(/@.*$/, '').replace(/[^0-9]/g, '');
+        pendingInvites.push({
+            jid: member.id,
+            phone,
+            name: phone, // Will use phone as name since we don't have pushName
+            sourceGroup: sourceGroupName
+        });
+    }
+
+    if (!isProcessing) processQueue(sock);
+
+    return { success: true, totalMembers: members.length, eligible: eligible.length, queued: pendingInvites.length };
 }
 
 async function queueInvite(sock, senderJid, pushName) {
@@ -43,10 +120,11 @@ async function queueInvite(sock, senderJid, pushName) {
 
     const phone = senderJid.replace(/@.*$/, '').replace(/[^0-9]/g, '');
     if (!phone || phone.length < 8) return { success: false, reason: 'invalid_phone' };
+    if (invitedPhones.has(phone)) return { success: false, reason: 'already_invited' };
     if (sentToday.has(phone)) return { success: false, reason: 'already_invited_today' };
     if (sendCount >= DAILY_LIMIT) return { success: false, reason: 'daily_limit_reached', remaining: getRemaining() };
 
-    pendingInvites.push({ senderJid, phone, name: pushName || phone });
+    pendingInvites.push({ jid: senderJid, phone, name: pushName || phone, sourceGroup: 'message' });
     console.log(`[GroupInviter] Queued ${pushName || phone} (${pendingInvites.length} pending, ${sendCount}/${DAILY_LIMIT} used today)`);
 
     if (!isProcessing) processQueue(sock);
@@ -66,37 +144,31 @@ async function processQueue(sock) {
             break;
         }
 
-        const msg = `Hi ${invite.name}! 👋\n\n` +
-            `We noticed you're in a local community group. ` +
-            `We'd love to have you in our *Smile & Supplies* WhatsApp group!\n\n` +
-            `🛍️ *What we offer:*\n` +
-            `• Phone accessories\n` +
-            `• Kitchen appliances\n` +
-            `• Stationery & cosmetics\n` +
-            `• Gifts & ornaments\n` +
-            `• Daily deals & discounts\n\n` +
-            `👇 *Tap the link to join:*\n` +
-            `${GROUP_LINK}\n\n` +
-            `See you there! 🎉`;
+        const msg = buildInviteMessage(invite.name);
 
         try {
-            console.log(`[GroupInviter] Sending invite to ${invite.name} (${invite.phone})...`);
-            await sock.sendMessage(invite.senderJid, { text: msg });
+            console.log(`[GroupInviter] Sending invite to ${invite.name} (${invite.phone}) from "${invite.sourceGroup}"...`);
+            await sock.sendMessage(invite.jid, { text: msg });
             sentToday.add(invite.phone);
+            invitedPhones.add(invite.phone);
             sendCount++;
             console.log(`[GroupInviter] ✅ Sent to ${invite.name} (${sendCount}/${DAILY_LIMIT} today)`);
         } catch (e) {
             console.error(`[GroupInviter] ❌ Failed to send to ${invite.name}: ${e.message}`);
+            if (e.message?.includes('not found') || e.message?.includes('blocked')) {
+                console.log(`[GroupInviter] ${invite.name} may have blocked the bot. Skipping.`);
+            }
         }
 
         if (pendingInvites.length > 0) {
-            const delay = SEND_DELAY_MS + Math.random() * 25000; // 35-60s
-            console.log(`[GroupInviter] Waiting ${(delay / 1000).toFixed(0)}s before next DM...`);
+            const delay = SEND_DELAY_MS + Math.random() * 25000;
+            console.log(`[GroupInviter] Waiting ${(delay / 1000).toFixed(0)}s before next DM (${pendingInvites.length} remaining)...`);
             await new Promise(r => setTimeout(r, delay));
         }
     }
 
     isProcessing = false;
+    console.log(`[GroupInviter] Queue complete. Sent ${sendCount}/${DAILY_LIMIT} today.`);
 }
 
 function getStats() {
@@ -106,10 +178,21 @@ function getStats() {
         dailyLimit: DAILY_LIMIT,
         remaining: getRemaining(),
         pending: pendingInvites.length,
-        isProcessing
+        isProcessing,
+        totalInvited: invitedPhones.size
     };
 }
 
 setInterval(resetIfNeeded, 60 * 60 * 1000);
 
-module.exports = { queueInvite, getStats, canSend, getRemaining };
+module.exports = { extractAndInvite, queueInvite, getStats, canSend, getRemaining };
+
+function canSend() {
+    resetIfNeeded();
+    return sendCount < DAILY_LIMIT;
+}
+
+function getRemaining() {
+    resetIfNeeded();
+    return Math.max(0, DAILY_LIMIT - sendCount);
+}

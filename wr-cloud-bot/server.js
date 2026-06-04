@@ -438,6 +438,36 @@ async function connectToWhatsApp() {
                         continue;
                     }
                 }
+
+                // Owner: extract members from source groups
+                if (/\b(extract|invite|bulk invite|add all|get members)\b/i.test(text)) {
+                    const sourceGroups = (process.env.WATCHED_GROUPS || '').split(',').map(g => g.trim().toLowerCase());
+                    let totalQueued = 0;
+                    for (const [jid, name] of knownGroups) {
+                        const isSource = sourceGroups.some(sg => name.toLowerCase().includes(sg)) && !name.toLowerCase().includes('smile');
+                        if (isSource) {
+                            const result = await groupAdder.extractAndInvite(sock, jid, name);
+                            if (result.success) {
+                                totalQueued += result.eligible;
+                                await sock.sendMessage(replyTo, { text: `📋 *${name}*\nMembers: ${result.totalMembers}\nEligible: ${result.eligible}\nQueued for invite: ${result.queued}` });
+                            }
+                        }
+                    }
+                    if (totalQueued > 0) {
+                        const stats = groupAdder.getStats();
+                        await sock.sendMessage(replyTo, { text: `✅ *Invite queue ready!*\n\nTotal queued: ${totalQueued}\nDaily limit: ${stats.dailyLimit}\nWill take ~${Math.ceil(totalQueued * 0.75)} minutes\n\nBot will send DMs automatically with 35-60s delays.` });
+                    } else {
+                        await sock.sendMessage(replyTo, { text: `No source groups found. Check WATCHED_GROUPS env var.` });
+                    }
+                    continue;
+                }
+
+                // Owner: check invite stats
+                if (/\b(invite stats|invite status|how many invites)\b/i.test(text)) {
+                    const stats = groupAdder.getStats();
+                    await sock.sendMessage(replyTo, { text: `📊 *Invite Stats*\n\nSent today: ${stats.sentToday}/${stats.dailyLimit}\nRemaining: ${stats.remaining}\nPending queue: ${stats.pending}\nProcessing: ${stats.isProcessing ? 'Yes' : 'No'}\nTotal invited (all-time): ${stats.totalInvited}` });
+                    continue;
+                }
             }
 
             // Skip auto-reply to other admins (owner already handled above, so not skipped)
