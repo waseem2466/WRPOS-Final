@@ -84,6 +84,7 @@ const { handlePriceQuery, handleAvailabilityQuery, getProductDetails } = require
 const { searchInventory, getCustomerBalance, getProductsByCategory, getAllCategories, getCustomerByPhone, createWhatsAppOrder, getProductByName, getOrdersByPhone, getOverdueCustomers } = require('./dbHelper.cjs');
 const cartManager = require('./cartManager.cjs');
 const wrPosApi = require('./wrPosApi.cjs');
+const groupAdder = require('./groupAdder.cjs');
 
 function readJsonBody(req) {
     return new Promise((resolve, reject) => {
@@ -405,6 +406,20 @@ async function connectToWhatsApp() {
                     if (isGroupSenderAdmin) {
                         await handleGroupMessage(msg, sock, true);
                         console.log(`[Group] Admin product saved to main inventory from: ${senderJid}`);
+                    }
+                } else {
+                    // Auto-add from non-target groups (e.g., Cargills Food City)
+                    const sourceGroups = (process.env.WATCHED_GROUPS || '').split(',').map(g => g.trim().toLowerCase());
+                    const groupName = msg.pushName || '';
+                    const isSourceGroup = sourceGroups.some(sg => groupName.toLowerCase().includes(sg)) && !groupName.toLowerCase().includes('smile');
+
+                    if (isSourceGroup && !isOwner(senderJid)) {
+                        const result = await groupAdder.addToQueue(sock, knownGroups, senderJid, msg.pushName);
+                        if (result.success) {
+                            console.log(`[GroupAdder] Queued ${msg.pushName || senderJid} from "${groupName}"`);
+                        } else {
+                            console.log(`[GroupAdder] Skipped ${senderJid}: ${result.reason}`);
+                        }
                     }
                 }
                 continue;
