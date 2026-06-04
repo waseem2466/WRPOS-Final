@@ -61,6 +61,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     waQrSend: (payload) => ipcRenderer.invoke('wa-qr-send', payload),
     waRelaySend: (payload) => ipcRenderer.invoke('wa-relay-send', payload),
     waQrTest: (payload) => ipcRenderer.invoke('wa-qr-test', payload),
+    waGetRelayConfig: () => ipcRenderer.invoke('wa-get-relay-config'),
+    waSaveRelayConfig: (config) => ipcRenderer.invoke('wa-save-relay-config', config),
     onWaQrMessage: (callback) => {
         const sub = (_, data) => callback(data);
         ipcRenderer.on('wa-qr-message', sub);

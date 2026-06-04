@@ -274,6 +274,7 @@ export interface DB {
     update: (c: Customer) => Promise<void>;
     delete: (id: string) => Promise<void>;
     recalculateBalance: (id: string) => Promise<{ balance: number; totalPaid: number }>;
+    recalculateAllBalances: () => Promise<{ fixed: number; errors: number }>;
   };
   bills: {
     getAll: (archived?: boolean) => Promise<Bill[]>;
@@ -1137,6 +1138,55 @@ export const db: DB = {
       } finally {
         client.release();
       }
+    },
+    recalculateAllBalances: async () => {
+      let fixed = 0;
+      let errors = 0;
+      const allCustomers = [...dbCache.customers];
+      for (const cust of allCustomers) {
+        try {
+          const client = await pool.connect();
+          try {
+            const statsRes = await client.query(`
+              SELECT
+                (SELECT SUM(total) FROM "Bill" WHERE customer_id = $1 AND archived = FALSE) as total_billed,
+                (SELECT SUM(cash_received) FROM "Bill" WHERE customer_id = $1 AND archived = FALSE) as total_downpayment,
+                (SELECT SUM(amount) FROM "Payment" WHERE customer_id = $1) as total_paid,
+                (SELECT SUM(refund_value) FROM "ReturnRecord" WHERE customer_id = $1 AND payment_type = 'CREDIT') as total_returned
+            `, [cust.id]);
+            const stats = statsRes.rows[0];
+            const billTotal = toNum(stats.total_billed);
+            const downPaymentTotal = toNum(stats.total_downpayment);
+            const paymentTotal = toNum(stats.total_paid);
+            const returnTotal = toNum(stats.total_returned);
+            const effectiveDebt = Math.max(0, billTotal - downPaymentTotal);
+            const newBalance = Math.max(0, effectiveDebt - (paymentTotal + returnTotal));
+            const newTotalPaid = paymentTotal + downPaymentTotal;
+            const newTotalLoan = effectiveDebt;
+            await client.query(
+              `UPDATE "Customer" SET balance = $1, total_paid = $2, total_loan = $3 WHERE id = $4`,
+              [newBalance, newTotalPaid, newTotalLoan, cust.id]
+            );
+            const idx = dbCache.customers.findIndex((x: Customer) => x.id === cust.id);
+            if (idx > -1) {
+              const updated = { ...dbCache.customers[idx], balanceDue: newBalance, totalPaid: newTotalPaid, totalLoan: newTotalLoan };
+              const arr = [...dbCache.customers];
+              arr[idx] = updated;
+              dbCache.customers = arr;
+              SyncEngine.addToQueue('ADD_CUSTOMER_FULL', updated);
+            }
+            fixed++;
+          } finally {
+            client.release();
+          }
+        } catch (e) {
+          errors++;
+          console.error('[recalculateAllBalances] Error for', cust.name, e);
+        }
+      }
+      SyncEngine.saveLocal();
+      if (!isOfflineMode) SyncEngine.processQueue();
+      return { fixed, errors };
     }
   },
 

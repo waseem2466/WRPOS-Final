@@ -36,5 +36,10 @@ data/
 *.dmg
 *.pkg
 release/
+release-*/
 out/
 build/
+tmp_asar_extract/
+test_auth/
+*.jpeg
+*.jpg

@@ -107,10 +107,6 @@
     ],
     "extraResources": [
       {
-        "from": ".env",
-        "to": ".env"
-      },
-      {
         "from": "build/icons/Icon.ico",
         "to": "Icon.ico"
       }

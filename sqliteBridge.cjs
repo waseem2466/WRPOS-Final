@@ -85,6 +85,7 @@ function translateSql(sql, params = []) {
     .replace(/DEFAULT\s+NOW\(\)/gi, 'DEFAULT CURRENT_TIMESTAMP')
     .replace(/NOW\(\)::date::text/gi, "date('now')")
     .replace(/NOW\(\)/gi, "datetime('now')")
+    .replace(/\bGREATEST\s*\(/gi, 'MAX(')       // SQLite: MAX(a,b) is scalar, GREATEST not supported
     .replace(/\$(\d+)::timestamp/gi, (_match, index) => {
       translatedParams.push(normalizeValue(params[Number(index) - 1]));
       return '?';

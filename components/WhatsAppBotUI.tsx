@@ -39,6 +39,10 @@ export const WhatsAppBotUI: React.FC = () => {
     const [cloudConfig, setCloudConfig] = useState({ token: '', phoneNumberId: '' });
     const [isSavingCloud, setIsSavingCloud] = useState(false);
 
+    // Cloud Bot Relay State
+    const [relayConfig, setRelayConfig] = useState({ relayUrl: '', relaySecret: '' });
+    const [isSavingRelay, setIsSavingRelay] = useState(false);
+
     // Unified State
     const [logs, setLogs] = useState<LogItem[]>([]);
     const [manualMsg, setManualMsg] = useState('');
@@ -59,6 +63,13 @@ export const WhatsAppBotUI: React.FC = () => {
             if (config) {
                 setIsBotActive(config.isBotEnabled);
                 localStorage.setItem('wa_cloud_bot_active', String(config.isBotEnabled));
+            }
+        });
+
+        // Load Cloud Bot Relay Config
+        window.electronAPI?.waGetRelayConfig?.().then((rc: any) => {
+            if (rc) {
+                setRelayConfig(rc);
             }
         });
     }, []);
@@ -154,6 +165,15 @@ export const WhatsAppBotUI: React.FC = () => {
     }, []);
 
     useEffect(() => {
+        if (status.state === 'RELAY_ACTIVE') {
+            const pollInterval = setInterval(() => {
+                loadHistory(cloudConfig.phoneNumberId, true);
+            }, 10000);
+            return () => clearInterval(pollInterval);
+        }
+    }, [status.state, cloudConfig.phoneNumberId]);
+
+    useEffect(() => {
         if (activeTab === 'qr' && !loading && !qrRequestSent.current && status.state === 'LOGGED_OUT') {
             qrRequestSent.current = true;
             const requestQr = async () => {
@@ -170,7 +190,7 @@ export const WhatsAppBotUI: React.FC = () => {
         }
     }, [activeTab, loading, status.state]);
 
-    const loadHistory = (phoneNumberId: string) => {
+    const loadHistory = (phoneNumberId: string, silent = false) => {
         window.electronAPI?.waCloudGetHistory?.({ limit: 50 }).then((history: any) => {
             if (history && history.length > 0) {
                 const historyLogs = history.map((m: any) => {
@@ -190,10 +210,26 @@ export const WhatsAppBotUI: React.FC = () => {
                     };
                 });
                 setLogs(historyLogs);
-                addLog({ type: 'system', source: 'cloud', text: `Restored ${history.length} messages from Neural Cache` });
+                if (!silent) {
+                    addLog({ type: 'system', source: 'cloud', text: `Restored ${history.length} messages from Neural Cache` });
+                }
             }
         });
     }
+
+    const handleSaveRelay = async () => {
+        setIsSavingRelay(true);
+        const response = await window.electronAPI?.waSaveRelayConfig?.({
+            relayUrl: relayConfig.relayUrl.trim(),
+            relaySecret: relayConfig.relaySecret.trim()
+        });
+        setIsSavingRelay(false);
+        if (!response?.success) {
+            addLog({ type: 'error', source: 'qr', text: response?.error || 'Unable to save relay configuration' });
+            return;
+        }
+        addLog({ type: 'system', source: 'qr', text: 'Cloud Bot Relay configuration saved successfully!' });
+    };
 
     const handleLink = async () => {
         setLoading(true);
@@ -242,10 +278,17 @@ export const WhatsAppBotUI: React.FC = () => {
                     throw new Error(cloudResponse?.error || 'Cloud send failed');
                 }
             } else {
-                if (status.state !== 'LINKED') throw new Error('QR not linked');
-                const qrResponse = await window.electronAPI?.waQrSend?.({ to: target, message: manualMsg, id: tempId });
-                if (!qrResponse?.success) {
-                    throw new Error(qrResponse?.error || 'QR send failed');
+                if (status.state === 'RELAY_ACTIVE') {
+                    const relayResponse = await window.electronAPI?.waRelaySend?.({ to: target, message: manualMsg, id: tempId });
+                    if (!relayResponse?.success) {
+                        throw new Error(relayResponse?.error || 'Relay send failed');
+                    }
+                } else {
+                    if (status.state !== 'LINKED') throw new Error('QR not linked');
+                    const qrResponse = await window.electronAPI?.waQrSend?.({ to: target, message: manualMsg, id: tempId });
+                    if (!qrResponse?.success) {
+                        throw new Error(qrResponse?.error || 'QR send failed');
+                    }
                 }
             }
             setManualMsg('');
@@ -306,78 +349,148 @@ export const WhatsAppBotUI: React.FC = () => {
             {/* Top Config Area (Dynamic but Unified) */}
             <div className="p-5 bg-white/5 border-b border-white/5">
                 {activeTab === 'qr' ? (
-                    <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_auto] gap-4 bg-black/35 p-4 rounded-[2rem] border border-white/5">
-                        <div className="flex items-center gap-4 min-w-0">
-                            {status.state === 'QR_READY' && status.qr ? (
-                                <div className="p-4 bg-white rounded-[1.8rem] shadow-xl shrink-0">
-                                    <img src={status.qr} alt="QR" className="w-40 h-40 md:w-56 md:h-56 object-contain" />
-                                </div>
-                            ) : (
-                                <div className={`w-14 h-14 rounded-[1rem] flex items-center justify-center shrink-0 ${status.state === 'LINKED' ? 'bg-emerald-500/20 border-emerald-500/30' : 'bg-slate-500/20 border-slate-500/30'} border`}>
-                                    {status.state === 'LINKED' ? <CheckCircle className="text-emerald-500" /> : <Smartphone className="text-slate-500" />}
-                                </div>
-                            )}
-                            <div className="min-w-0">
-                                <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Baileys Status</p>
-                                <p className={`text-sm font-black uppercase ${status.state === 'LINKED' ? 'text-emerald-500' : (status.state === 'RECONNECTING' ? 'text-orange-500' : (status.state === 'QR_READY' ? 'text-blue-400' : 'text-slate-400'))}`}>
-                                    {status.state.replace('_', ' ')}
-                                </p>
-                                {status.state !== 'LINKED' && status.state !== 'QR_READY' && (
-                                    <p className="mt-2 text-[10px] text-slate-400 max-w-[220px]">
-                                        No QR is available yet. Click "Link Personal Device" to generate a new WhatsApp login QR.
-                                    </p>
+                    <div className="space-y-4">
+                        <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_auto] gap-4 bg-black/35 p-4 rounded-[2rem] border border-white/5">
+                            <div className="flex items-center gap-4 min-w-0">
+                                {status.state === 'QR_READY' && status.qr ? (
+                                    <div className="p-4 bg-white rounded-[1.8rem] shadow-xl shrink-0">
+                                        <img src={status.qr} alt="QR" className="w-40 h-40 md:w-56 md:h-56 object-contain" />
+                                    </div>
+                                ) : (
+                                    <div className={`w-14 h-14 rounded-[1rem] flex items-center justify-center shrink-0 ${status.state === 'LINKED' || status.state === 'RELAY_ACTIVE' ? 'bg-emerald-500/20 border-emerald-500/30' : 'bg-slate-500/20 border-slate-500/30'} border`}>
+                                        {status.state === 'LINKED' || status.state === 'RELAY_ACTIVE' ? <CheckCircle className="text-emerald-500" /> : <Smartphone className="text-slate-500" />}
+                                    </div>
                                 )}
-                            </div>
-                        </div>
-                        <div className="flex flex-wrap gap-2 xl:justify-end">
-                            {status.state === 'LINKED' ? (
-                                <div className="flex gap-2">
-                                    <button
-                                        onClick={async () => {
-                                            if (!targetNumber) {
-                                                alert('Please enter a phone number in the "Number..." field first.');
-                                                return;
-                                            }
-                                            const res = await (window as any).electronAPI.waQrTest({ to: targetNumber });
-                                            if (res.success) alert('Test signal sent! Check your phone.');
-                                            else alert('Test failed: ' + res.error);
-                                        }}
-                                        className="px-4 py-2.5 premium-chip tap-lift bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-500 rounded-xl text-[10px] font-black uppercase tracking-[0.22em] border border-emerald-500/30 transition-all flex items-center gap-2"
-                                    >
-                                        <Zap size={14} /> Test
-                                    </button>
-                                    <button onClick={handleLogout} title="Stops the connection but keeps your saved WhatsApp login." className="px-4 py-2.5 premium-chip tap-lift bg-red-500/10 hover:bg-red-500/20 text-red-500 rounded-xl text-[10px] font-black uppercase tracking-[0.22em] border border-red-500/30 transition-all flex items-center gap-2">
-                                        <LogOut size={14} /> Stop Only
-                                    </button>
+                                <div className="min-w-0">
+                                    <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Baileys Status</p>
+                                    <p className={`text-sm font-black uppercase ${status.state === 'LINKED' || status.state === 'RELAY_ACTIVE' ? 'text-emerald-500' : (status.state === 'RECONNECTING' ? 'text-orange-500' : (status.state === 'QR_READY' ? 'text-blue-400' : 'text-slate-400'))}`}>
+                                        {status.state === 'RELAY_ACTIVE' ? 'RELAY ACTIVE (CLOUD BOT)' : status.state.replace('_', ' ')}
+                                    </p>
+                                    {status.state === 'RELAY_ACTIVE' ? (
+                                        <p className="mt-2 text-[10px] text-emerald-400 max-w-lg">
+                                            Connected via Cloud Bot Relay. Your local client is suspended to prevent socket conflict.
+                                        </p>
+                                    ) : status.state !== 'LINKED' && status.state !== 'QR_READY' && (
+                                        <p className="mt-2 text-[10px] text-slate-400 max-w-[220px]">
+                                            No QR is available yet. Click "Link Personal Device" to generate a new WhatsApp login QR.
+                                        </p>
+                                    )}
                                 </div>
-                            ) : (
-                                <div className="flex gap-2">
-                                    {status.state === 'QR_READY' && (
+                            </div>
+                            <div className="flex flex-wrap gap-2 xl:justify-end">
+                                {status.state === 'RELAY_ACTIVE' ? (
+                                    <div className="flex gap-2">
+                                        <button
+                                            onClick={async () => {
+                                                if (!targetNumber) {
+                                                    alert('Please enter a phone number in the "Number..." field first.');
+                                                    return;
+                                                }
+                                                const res = await (window as any).electronAPI.waQrTest({ to: targetNumber });
+                                                if (res.success) alert('Test signal sent via Relay! Check your phone.');
+                                                else alert('Test failed: ' + res.error);
+                                            }}
+                                            className="px-4 py-2.5 premium-chip tap-lift bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-500 rounded-xl text-[10px] font-black uppercase tracking-[0.22em] border border-emerald-500/30 transition-all flex items-center gap-2"
+                                        >
+                                            <Zap size={14} /> Test Relay
+                                        </button>
                                         <button 
                                             onClick={handleDeepReset} 
-                                            title="Deep Reset: Wipes all session data and starts fresh if you are experiencing disconnection issues." 
+                                            title="Deep Reset: Wipes all local session files if they are corrupt." 
                                             className="px-3 py-2 premium-chip tap-lift bg-red-500/10 hover:bg-red-500/20 text-red-500 rounded-xl border border-red-500/20 transition-all flex items-center gap-2 group"
                                         >
                                             <RefreshCw size={14} className="group-hover:rotate-180 transition-transform duration-500" />
                                             <span className="text-[9px] font-black uppercase">Deep Reset</span>
                                         </button>
-                                    )}
-                                    {status.error && (
-                                        <div className="flex items-center gap-2 text-red-500 bg-red-500/10 px-4 py-2 rounded-xl border border-red-500/20 animate-in fade-in zoom-in duration-300">
-                                            <AlertCircle size={16} /> 
-                                            <span className="text-[10px] font-black uppercase tracking-tight">{status.error}</span>
-                                        </div>
-                                    )}
-                                    {status.state === 'RECONNECTING' && (
-                                        <div className="flex items-center gap-2 text-orange-500 bg-orange-500/10 px-3 py-1 rounded-lg border border-orange-500/20 animate-pulse">
-                                            <Activity size={12} /> <span className="text-[10px] font-bold uppercase tracking-tighter">Retrying Connection...</span>
-                                        </div>
-                                    )}
-                                    <button onClick={handleLink} className="px-4 py-2.5 premium-chip tap-lift bg-blue-500 text-white rounded-[1rem] text-[10px] font-black uppercase tracking-[0.22em] hover:bg-blue-600 shadow-lg shadow-blue-500/20 transition-all flex items-center gap-2">
-                                        <Smartphone size={14} className={loading ? 'animate-spin' : ''} /> {loading ? 'Initializing Brain...' : (status.state === 'QR_READY' ? 'Get New QR' : 'Link Personal Device')}
-                                    </button>
+                                    </div>
+                                ) : status.state === 'LINKED' ? (
+                                    <div className="flex gap-2">
+                                        <button
+                                            onClick={async () => {
+                                                if (!targetNumber) {
+                                                    alert('Please enter a phone number in the "Number..." field first.');
+                                                    return;
+                                                }
+                                                const res = await (window as any).electronAPI.waQrTest({ to: targetNumber });
+                                                if (res.success) alert('Test signal sent! Check your phone.');
+                                                else alert('Test failed: ' + res.error);
+                                            }}
+                                            className="px-4 py-2.5 premium-chip tap-lift bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-500 rounded-xl text-[10px] font-black uppercase tracking-[0.22em] border border-emerald-500/30 transition-all flex items-center gap-2"
+                                        >
+                                            <Zap size={14} /> Test
+                                        </button>
+                                        <button onClick={handleLogout} title="Stops the connection but keeps your saved WhatsApp login." className="px-4 py-2.5 premium-chip tap-lift bg-red-500/10 hover:bg-red-500/20 text-red-500 rounded-xl text-[10px] font-black uppercase tracking-[0.22em] border border-red-500/30 transition-all flex items-center gap-2">
+                                            <LogOut size={14} /> Stop Only
+                                        </button>
+                                    </div>
+                                ) : (
+                                    <div className="flex gap-2">
+                                        {status.state === 'QR_READY' && (
+                                            <button 
+                                                onClick={handleDeepReset} 
+                                                title="Deep Reset: Wipes all session data and starts fresh if you are experiencing disconnection issues." 
+                                                className="px-3 py-2 premium-chip tap-lift bg-red-500/10 hover:bg-red-500/20 text-red-500 rounded-xl border border-red-500/20 transition-all flex items-center gap-2 group"
+                                            >
+                                                <RefreshCw size={14} className="group-hover:rotate-180 transition-transform duration-500" />
+                                                <span className="text-[9px] font-black uppercase">Deep Reset</span>
+                                            </button>
+                                        )}
+                                        {status.error && (
+                                            <div className="flex items-center gap-2 text-red-500 bg-red-500/10 px-4 py-2 rounded-xl border border-red-500/20 animate-in fade-in zoom-in duration-300">
+                                                <AlertCircle size={16} /> 
+                                                <span className="text-[10px] font-black uppercase tracking-tight">{status.error}</span>
+                                            </div>
+                                        )}
+                                        {status.state === 'RECONNECTING' && (
+                                            <div className="flex items-center gap-2 text-orange-500 bg-orange-500/10 px-3 py-1 rounded-lg border border-orange-500/20 animate-pulse">
+                                                <Activity size={12} /> <span className="text-[10px] font-bold uppercase tracking-tighter">Retrying Connection...</span>
+                                            </div>
+                                        )}
+                                        <button onClick={handleLink} className="px-4 py-2.5 premium-chip tap-lift bg-blue-500 text-white rounded-[1rem] text-[10px] font-black uppercase tracking-[0.22em] hover:bg-blue-600 shadow-lg shadow-blue-500/20 transition-all flex items-center gap-2">
+                                            <Smartphone size={14} className={loading ? 'animate-spin' : ''} /> {loading ? 'Initializing Brain...' : (status.state === 'QR_READY' ? 'Get New QR' : 'Link Personal Device')}
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+
+                        {/* Cloud Bot Relay Configuration Card */}
+                        <div className="bg-black/35 p-5 rounded-[2rem] border border-white/5 space-y-4">
+                            <div className="flex items-center gap-2">
+                                <Cloud className="text-blue-500" size={16} />
+                                <h3 className="text-xs font-black text-white uppercase tracking-wider">Cloud Bot Relay Integration</h3>
+                            </div>
+                            <p className="text-[10px] text-slate-400">
+                                If you have deployed the WR POS Bot to Koyeb/Cloud, enter the Relay URL and Secret key below. 
+                                This automatically suspends the local desktop WhatsApp socket to run entirely through your 24/7 cloud instance, avoiding disconnections and linked-device conflicts.
+                            </p>
+                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                                <div className="bg-black/40 p-4 rounded-[1.6rem] border border-white/5">
+                                    <label className="block text-[9px] font-black text-slate-500 uppercase tracking-widest mb-2">Relay URL</label>
+                                    <input
+                                        type="text"
+                                        value={relayConfig.relayUrl}
+                                        onChange={(e) => setRelayConfig(prev => ({ ...prev, relayUrl: e.target.value }))}
+                                        className="w-full bg-transparent border-none text-white text-xs focus:ring-0 p-0 placeholder:text-slate-600"
+                                        placeholder="https://level-layney-wrsjhfc-c142f8ef.koyeb.app"
+                                    />
                                 </div>
-                            )}
+                                <div className="bg-black/40 p-4 rounded-[1.6rem] border border-white/5">
+                                    <label className="block text-[9px] font-black text-slate-500 uppercase tracking-widest mb-2">Relay Secret</label>
+                                    <input
+                                        type="password"
+                                        value={relayConfig.relaySecret}
+                                        onChange={(e) => setRelayConfig(prev => ({ ...prev, relaySecret: e.target.value }))}
+                                        className="w-full bg-transparent border-none text-white text-xs focus:ring-0 p-0 font-mono placeholder:text-slate-600"
+                                        placeholder="your-secret-key"
+                                    />
+                                </div>
+                            </div>
+                            <div className="flex justify-end">
+                                <button onClick={handleSaveRelay} disabled={isSavingRelay} className="px-4 py-2.5 premium-chip tap-lift bg-blue-600 text-white rounded-[1rem] text-[10px] font-black uppercase tracking-[0.22em] hover:bg-blue-700 shadow-lg shadow-blue-500/20 transition-all flex items-center justify-center gap-2">
+                                    {isSavingRelay ? <RefreshCw className="animate-spin" size={14} /> : <Save size={14} />} Save Relay Config
+                                </button>
+                            </div>
                         </div>
                     </div>
                 ) : (

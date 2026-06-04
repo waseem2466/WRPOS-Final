@@ -11,7 +11,7 @@ import {
   Database, Download, FileSpreadsheet,
   HardDrive, Activity, ShieldCheck, ShieldAlert,
   Trash2, Terminal, FileJson, Users, ShoppingCart, Package, Wallet,
-  UploadCloud, Smartphone, QrCode
+  UploadCloud, Smartphone, QrCode, RefreshCw
 } from 'lucide-react';
 
 export const SettingsManager: React.FC = () => {
@@ -21,6 +21,7 @@ export const SettingsManager: React.FC = () => {
   const [isExporting, setIsExporting] = useState<string | null>(null);
   const [isBackingUp, setIsBackingUp] = useState(false);
   const [isRestoring, setIsRestoring] = useState(false);
+  const [isRecalculating, setIsRecalculating] = useState(false);
   const [lankaQrString, setLankaQrString] = useState('');
   const restoreInputRef = useRef<HTMLInputElement>(null);
 
@@ -177,6 +178,21 @@ export const SettingsManager: React.FC = () => {
       }
     };
     reader.readAsText(file);
+  };
+
+  const handleRecalculateAllBalances = async () => {
+    if (!confirm("Are you sure you want to recalculate all customer balances?\n\nThis will scan all invoices, downpayments, returns, and payments, correcting any discrepancies.")) return;
+    setIsRecalculating(true);
+    try {
+      const res = await db.customers.recalculateAllBalances();
+      alert(`Balance Recalculation Complete!\n\nSuccessfully fixed: ${res.fixed} customers.\nErrors encountered: ${res.errors}`);
+      loadSettings();
+    } catch (e: any) {
+      console.error("Recalculation failed", e);
+      alert("Failed to recalculate balances: " + e.message);
+    } finally {
+      setIsRecalculating(false);
+    }
   };
 
   const downloadBatchScript = (type: 'BACKUP' | 'CLEANUP') => {
@@ -456,6 +472,21 @@ timeout /t 5`;
                       accept=".json"
                       onChange={handleRestoreFile}
                     />
+
+                    <button
+                      type="button"
+                      onClick={handleRecalculateAllBalances}
+                      disabled={isRecalculating}
+                      className="p-4 bg-emerald-600/5 border border-emerald-500/10 rounded-[1.5rem] flex items-center gap-4 hover:bg-emerald-600/10 transition-all group text-left md:col-span-2"
+                    >
+                      <div className="w-10 h-10 bg-emerald-600/20 text-emerald-400 rounded-xl flex items-center justify-center border border-emerald-500/20">
+                        {isRecalculating ? <Loader2 size={18} className="animate-spin text-emerald-400" /> : <RefreshCw size={18} className="text-emerald-450 text-emerald-400" />}
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-black text-emerald-400 uppercase tracking-widest">Recalculate & Fix Customer Balances</h4>
+                        <p className="text-[8px] text-emerald-500/50 font-medium mt-0.5">Recalculate balances for all customers based on bill and payment history to repair corrupted balance values.</p>
+                      </div>
+                    </button>
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

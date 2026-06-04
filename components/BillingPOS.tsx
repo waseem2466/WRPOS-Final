@@ -895,7 +895,7 @@ export const BillingPOS: React.FC = () => {
       const url = await pdfService.generateInvoice(bill, settings, customer);
       setInvoiceUrl(url);
       await whatsappService.sendBillTemplate(settings, customer, bill, { invoiceUrl: url });
-      alert('Invoice PDF link sent to WhatsApp.');
+      alert('Invoice PDF sent to WhatsApp.');
     } catch (e: any) {
       alert('Failed to send invoice to WhatsApp: ' + e.message);
     } finally {
@@ -904,7 +904,6 @@ export const BillingPOS: React.FC = () => {
   };
 
   const printBillWithQR = (bill: Bill) => {
-    const qrValue = `INV:${bill.invoiceNumber}|TOTAL:${bill.total}|DATE:${new Date(bill.date).toLocaleDateString()}`;
     const printWindow = window.open('', '', 'width=800,height=600');
     if (!printWindow) return;
 
@@ -991,6 +990,7 @@ export const BillingPOS: React.FC = () => {
             height: 150px;
             display: inline-block;
             margin: 10px 0;
+            object-fit: contain;
           }
           .footer {
             text-align: center;
@@ -1004,7 +1004,6 @@ export const BillingPOS: React.FC = () => {
             .no-print { display: none; }
           }
         </style>
-        <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
       </head>
       <body>
         <div class="receipt">
@@ -1059,9 +1058,9 @@ export const BillingPOS: React.FC = () => {
           </div>
 
           <div class="qr-section">
-            <p style="font-size: 10px; margin-bottom: 10px;">Scan to verify</p>
-            <div id="qrcode" class="qr-code"></div>
-            <p style="font-size: 10px; margin-top: 10px;">${qrValue}</p>
+            <p style="font-size: 10px; margin-bottom: 10px; font-weight: bold;">Scan & Pay</p>
+            <img src="/pay-go-qr.jpeg" class="qr-code" alt="Pay & Go QR">
+            <p style="font-size: 10px; margin-top: 10px;">Pay & Go QR</p>
           </div>
 
           <div class="footer">
@@ -1072,7 +1071,6 @@ export const BillingPOS: React.FC = () => {
         </div>
 
         <script>
-          new QRCode(document.getElementById("qrcode"), "${qrValue}");
           setTimeout(() => {
             window.print();
             window.close();

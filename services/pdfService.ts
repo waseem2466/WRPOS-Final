@@ -97,6 +97,28 @@ const getLogoData = async (): Promise<string | null> => {
     });
 };
 
+const getImageData = async (src: string): Promise<string | null> => {
+    return new Promise((resolve) => {
+        const img = new Image();
+        img.crossOrigin = 'Anonymous';
+        img.onload = () => {
+            const canvas = document.createElement('canvas');
+            canvas.width = img.width;
+            canvas.height = img.height;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) {
+                resolve(null);
+                return;
+            }
+
+            ctx.drawImage(img, 0, 0);
+            resolve(canvas.toDataURL('image/jpeg'));
+        };
+        img.onerror = () => resolve(null);
+        img.src = src;
+    });
+};
+
 export const pdfService = {
     generateInvoice: async (
         bill: Bill,
@@ -108,7 +130,18 @@ export const pdfService = {
         const doc = new jsPDF() as any;
 
         const pageWidth = doc.internal.pageSize.width;
+        const pageHeight = doc.internal.pageSize.height;
+        const footerY = pageHeight - 30;
+        const contentBottomY = footerY - 10;
         let yOffset = 0;
+        const moveToNextPageIfNeeded = (startY: number, blockHeight: number, nextPageY = 20) => {
+            if (startY + blockHeight <= contentBottomY) {
+                return startY;
+            }
+
+            doc.addPage();
+            return nextPageY;
+        };
 
         // Header
         doc.setFontSize(20);
@@ -200,10 +233,41 @@ export const pdfService = {
             }
         }
 
+        const payGoQrData = await getImageData('/pay-go-qr.jpeg');
+        const whatsAppGroupQrData = await getImageData('/whatsapp-group-qr-card.jpeg');
+        const qrBlockHeight = whatsAppGroupQrData ? 93 : (payGoQrData ? 46 : 0);
+        const qrY = qrBlockHeight > 0 ? moveToNextPageIfNeeded(finalY, qrBlockHeight) : finalY;
+        let qrSectionBottom = qrBlockHeight > 0 ? qrY : finalY;
+
+        if (payGoQrData) {
+            doc.setTextColor(0, 0, 0);
+            doc.setFont("helvetica", "bold");
+            doc.setFontSize(11);
+            doc.text("SCAN & PAY", 15, qrY);
+            doc.addImage(payGoQrData, 'JPEG', 15, qrY + 4, 35, 35);
+            doc.setFont("helvetica", "normal");
+            doc.setFontSize(8);
+            doc.text("Pay & Go QR", 32.5, qrY + 43, { align: 'center' });
+            qrSectionBottom = Math.max(qrSectionBottom, qrY + 46);
+        }
+
+        if (whatsAppGroupQrData) {
+            doc.setTextColor(0, 0, 0);
+            doc.setFont("helvetica", "bold");
+            doc.setFontSize(11);
+            doc.text("JOIN OUR GROUP", 58, qrY);
+            doc.addImage(whatsAppGroupQrData, 'JPEG', 58, qrY + 4, 70, 81);
+            doc.setFont("helvetica", "normal");
+            doc.setFontSize(8);
+            doc.text("WhatsApp group QR", 93, qrY + 90, { align: 'center' });
+            qrSectionBottom = Math.max(qrSectionBottom, qrY + 93);
+        }
+
         // Warranty Section
         const warrantyItems = bill.items.filter(i => i.warranty && i.warrantyYears! > 0);
         if (warrantyItems.length > 0) {
-            const warrantyY = finalY + 50;
+            const warrantyBlockHeight = 7 + (warrantyItems.length * 5);
+            const warrantyY = moveToNextPageIfNeeded(qrSectionBottom + 8, warrantyBlockHeight);
             doc.setTextColor(0, 0, 0);
             doc.setFont("helvetica", "bold");
             doc.text("WARRANTY INFORMATION", 15, warrantyY);
@@ -215,7 +279,6 @@ export const pdfService = {
         }
 
         // Footer Note
-        const footerY = doc.internal.pageSize.height - 30;
         doc.setFontSize(9);
         doc.setFont("helvetica", "italic");
         doc.setTextColor(100, 100, 100);

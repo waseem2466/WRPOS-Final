@@ -232,7 +232,12 @@ const connectionString = process.env.DATABASE_URL;
 const pools = new Map();
 let sqlitePool = null;
 const useSqlite = process.env.WRPOS_DB_DRIVER !== 'postgres';
-const hasWhatsAppRelay = () => Boolean(process.env.WHATSAPP_RELAY_URL && process.env.WHATSAPP_RELAY_SECRET);
+const hasWhatsAppRelay = () => Boolean(
+    (process.env.WHATSAPP_RELAY_URL && process.env.WHATSAPP_RELAY_SECRET) ||
+    (botConfig.whatsappRelayUrl && botConfig.whatsappRelaySecret)
+);
+const getRelayUrl = () => (botConfig.whatsappRelayUrl || process.env.WHATSAPP_RELAY_URL || '').replace(/\/$/, '');
+const getRelaySecret = () => botConfig.whatsappRelaySecret || process.env.WHATSAPP_RELAY_SECRET || '';
 const NEON_IMPORT_TABLES = [
     'AppUser',
     'Settings',
@@ -1318,14 +1323,22 @@ class WhatsAppBot {
         this.notifyStatus();
     }
 
-    async sendMessage(to, message) {
+    async sendMessage(to, message, options = {}) {
         if (!this.sock || this.state !== 'LINKED') {
             console.warn('[Baileys] Cannot send message: not connected.');
             return null;
         }
         try {
             const jid = to.includes('@') ? to : `${to}@s.whatsapp.net`;
-            const result = await this.sock.sendMessage(jid, { text: message });
+            const content = options.documentUrl
+                ? {
+                    document: { url: options.documentUrl },
+                    mimetype: 'application/pdf',
+                    fileName: options.documentName || 'invoice.pdf',
+                    caption: message
+                }
+                : { text: message };
+            const result = await this.sock.sendMessage(jid, content);
 
             // Log outgoing QR message
             await saveWhatsAppMessage({
@@ -1333,7 +1346,7 @@ class WhatsAppBot {
                 from: 'system',
                 to: to,
                 text: message,
-                type: 'outgoing',
+                type: options.documentUrl ? 'document' : 'outgoing',
                 method: 'qr'
             });
 
@@ -1472,7 +1485,12 @@ app.whenReady().then(async () => {
     }
 
     // IPC Handlers
-    ipcMain.handle('wa-get-status', () => ({ state: qrBot.state, qr: qrBot.qr }));
+    ipcMain.handle('wa-get-status', () => {
+        if (hasWhatsAppRelay()) {
+            return { state: 'RELAY_ACTIVE', qr: null, relayUrl: getRelayUrl() };
+        }
+        return { state: qrBot.state, qr: qrBot.qr };
+    });
     ipcMain.handle('wa-link', async () => {
         console.log('[IPC] wa-link handler called');
         try {
@@ -1506,14 +1524,17 @@ app.whenReady().then(async () => {
         if (hasWhatsAppRelay()) {
             return null;
         }
-        return qrBot.sendMessage(data.to, data.message);
+        return qrBot.sendMessage(data.to, data.message, {
+            documentUrl: data.documentUrl,
+            documentName: data.documentName
+        });
     });
     ipcMain.handle('wa-relay-send', async (e, data) => {
         try {
-            const relayUrl = (process.env.WHATSAPP_RELAY_URL || '').replace(/\/$/, '');
-            const relaySecret = process.env.WHATSAPP_RELAY_SECRET || '';
+            const relayUrl = getRelayUrl();
+            const relaySecret = getRelaySecret();
             if (!relayUrl || !relaySecret) {
-                return { success: false, error: 'WhatsApp relay is not configured' };
+                return { success: false, error: 'WhatsApp relay is not configured. Please save your Cloud Bot URL and Secret in the WhatsApp settings.' };
             }
 
             const response = await fetch(`${relayUrl}/send`, {
@@ -1532,7 +1553,7 @@ app.whenReady().then(async () => {
             const result = await response.json().catch(() => ({}));
             if (response.ok && result.success) {
                 await saveWhatsAppMessage({
-                    id: result.id,
+                    id: result.id || `relay_${Date.now()}`,
                     from: 'me',
                     to: data.to,
                     text: data.message,
@@ -1544,6 +1565,52 @@ app.whenReady().then(async () => {
             return { success: false, error: result.error || `Relay returned ${response.status}` };
         } catch (error) {
             return { success: false, error: error.message || 'WhatsApp relay send failed' };
+        }
+    });
+
+    // --- Relay Config Handlers ---
+    ipcMain.handle('wa-get-relay-config', () => ({
+        relayUrl: botConfig.whatsappRelayUrl || process.env.WHATSAPP_RELAY_URL || '',
+        relaySecret: botConfig.whatsappRelaySecret || process.env.WHATSAPP_RELAY_SECRET || ''
+    }));
+
+    ipcMain.handle('wa-save-relay-config', async (e, config) => {
+        botConfig.whatsappRelayUrl = (config.relayUrl || '').trim();
+        botConfig.whatsappRelaySecret = (config.relaySecret || '').trim();
+        saveConfig();
+        console.log('[Relay] Cloud Bot relay config saved:', botConfig.whatsappRelayUrl);
+        // If relay is now active, shut down local QR bot to prevent conflict
+        if (hasWhatsAppRelay() && qrBot.sock) {
+            console.log('[Relay] Disconnecting local QR bot since relay is now active...');
+            try { await qrBot.logout(); } catch(e) {}
+        }
+        // Notify UI of new status
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            const newState = hasWhatsAppRelay() ? 'RELAY_ACTIVE' : qrBot.state;
+            mainWindow.webContents.send('wa-status-update', { state: newState, qr: null, relayUrl: getRelayUrl() });
+        }
+        return { success: true };
+    });
+
+    // --- Deep Reset Handler ---
+    ipcMain.handle('wa-reset-session', async () => {
+        try {
+            await qrBot.logout();
+            // Clear local auth files
+            const authDir = path.join(DATA_DIR, 'baileys_auth_info');
+            if (fs.existsSync(authDir)) {
+                fs.rmSync(authDir, { recursive: true, force: true });
+                console.log('[QR Bot] Auth session wiped for deep reset.');
+            }
+            qrBot.state = 'LOGGED_OUT';
+            qrBot.qr = null;
+            if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.webContents.send('wa-status-update', { state: 'LOGGED_OUT', qr: null });
+            }
+            return { success: true };
+        } catch (e) {
+            console.error('[QR Bot] Deep reset error:', e.message);
+            return { success: false, error: e.message };
         }
     });
     ipcMain.handle('wa-qr-test', async (e, data) => {
@@ -1660,19 +1727,32 @@ app.whenReady().then(async () => {
 
             const proof = getAppSecretProof(token, appSecret);
             const url = `https://graph.facebook.com/v18.0/${phoneNumberId}/messages${proof ? `?appsecret_proof=${proof}` : ''}`;
+            const messagePayload = data.documentUrl
+                ? {
+                    messaging_product: "whatsapp",
+                    recipient_type: "individual",
+                    to: data.to,
+                    type: "document",
+                    document: {
+                        link: data.documentUrl,
+                        filename: data.documentName || 'invoice.pdf',
+                        caption: data.message
+                    }
+                }
+                : {
+                    messaging_product: "whatsapp",
+                    recipient_type: "individual",
+                    to: data.to,
+                    type: "text",
+                    text: { body: data.message }
+                };
             const response = await fetch(url, {
                 method: 'POST',
                 headers: {
                     'Authorization': `Bearer ${token}`,
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify({
-                    messaging_product: "whatsapp",
-                    recipient_type: "individual",
-                    to: data.to,
-                    type: "text",
-                    text: { body: data.message }
-                })
+                body: JSON.stringify(messagePayload)
             });
             const result = await response.json();
             if (response.ok) {
@@ -1681,7 +1761,7 @@ app.whenReady().then(async () => {
                     from: 'system',
                     to: data.to,
                     text: data.message,
-                    type: 'outgoing',
+                    type: data.documentUrl ? 'document' : 'outgoing',
                     method: 'cloud'
                 });
                 return { success: true, id: result.messages?.[0]?.id };

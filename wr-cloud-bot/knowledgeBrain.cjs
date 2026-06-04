@@ -43,9 +43,9 @@ async function loadDbKnowledge() {
     }
 }
 
-function loadKnowledge() {
+async function loadKnowledge() {
     loadLocalKnowledge();
-    loadDbKnowledge();
+    await loadDbKnowledge();
     lastLoadTime = Date.now();
 }
 
@@ -107,6 +107,6 @@ async function saveToDb(title, content, category = 'General') {
 }
 
 // Initial load
-loadKnowledge();
+loadKnowledge().catch(err => console.error('[Brain] Initial load failed:', err.message));
 
 module.exports = { searchKnowledge, getContextString, saveToDb, loadKnowledge };
