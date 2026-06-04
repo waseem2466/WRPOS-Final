@@ -81,7 +81,8 @@ const { handleGroupMessage, isWatchedGroup, registerGroup } = require('./groupWa
 const { aiReply } = require('./aiReply.cjs');
 const { detectIntent } = require('./intent.cjs');
 const { handlePriceQuery, handleAvailabilityQuery, getProductDetails } = require('./productPriceHandler.cjs');
-const { searchInventory, getCustomerBalance, getProductsByCategory, getAllCategories, getCustomerByPhone, createOrder, getOrdersByPhone, getOverdueCustomers } = require('./dbHelper.cjs');
+const { searchInventory, getCustomerBalance, getProductsByCategory, getAllCategories, getCustomerByPhone, createWhatsAppOrder, getProductByName, getOrdersByPhone, getOverdueCustomers } = require('./dbHelper.cjs');
+const cartManager = require('./cartManager.cjs');
 
 function readJsonBody(req) {
     return new Promise((resolve, reject) => {
@@ -422,6 +423,95 @@ async function connectToWhatsApp() {
             const phone = extractPhoneFromJid(senderJid);
             const customer = phone ? await getCustomerByPhone(phone) : null;
             if (customer) customerName = customer.name;
+
+            // ═══════════ CART & CHECKOUT ═══════════
+            // 0a. View cart
+            if (intent === 'VIEW_CART') {
+                const summary = cartManager.getCartSummary(senderJid);
+                if (summary) {
+                    await sock.sendMessage(replyTo, { text: `🛒 *Your Cart*\n\n${summary.text}\n\n💰 *Total: Rs. ${summary.total.toLocaleString()}*\n\nReply *"checkout"* to place order or *"clear cart"* to start over.` });
+                } else {
+                    await sock.sendMessage(replyTo, { text: `🛒 Your cart is empty.\n\nSend *"add [qty] [product]"* to add items.` });
+                }
+                continue;
+            }
+
+            // 0b. Clear cart
+            if (intent === 'CLEAR_CART') {
+                cartManager.clearCart(senderJid);
+                await sock.sendMessage(replyTo, { text: `🗑️ Cart cleared. Ready to shop!` });
+                continue;
+            }
+
+            // 0c. Remove from cart
+            if (intent === 'REMOVE_FROM_CART') {
+                const removeMatch = text.match(/(?:remove|delete|drop)\s+(?:from\s+cart\s+)?(.+)/i);
+                const itemName = removeMatch ? removeMatch[1].trim().replace(/\s+from\s+cart$/i, '') : '';
+                if (itemName) {
+                    const result = cartManager.removeFromCart(senderJid, itemName);
+                    if (result.removed) {
+                        const summary = cartManager.getCartSummary(senderJid);
+                        const totalLine = summary ? `\n\n💰 Total: Rs. ${summary.total.toLocaleString()}` : '';
+                        await sock.sendMessage(replyTo, { text: `❌ Removed *${result.item.name}* from cart.${totalLine}` });
+                    } else {
+                        await sock.sendMessage(replyTo, { text: `❓ "${itemName}" not found in your cart.` });
+                    }
+                } else {
+                    await sock.sendMessage(replyTo, { text: `Usage: *remove [product name]*` });
+                }
+                continue;
+            }
+
+            // 0d. Add to cart
+            if (intent === 'ADD_TO_CART') {
+                const addMatch = text.match(/(?:add|buy|get|want|need)\s+(\d+)?\s*(.+?)(?:\s+to\s+cart)?$/i);
+                const qty = addMatch && addMatch[1] ? parseInt(addMatch[1]) : 1;
+                const itemName = addMatch ? addMatch[2].trim().replace(/\s+to\s+cart$/i, '') : '';
+                if (itemName && itemName.length > 1) {
+                    const products = await searchInventory(itemName);
+                    if (products.length > 0) {
+                        const product = products[0];
+                        if (product.stock < qty) {
+                            await sock.sendMessage(replyTo, { text: `⚠️ Only *${product.stock}* in stock for *${product.name}*.` });
+                        } else {
+                            cartManager.addToCart(senderJid, product, qty);
+                            const summary = cartManager.getCartSummary(senderJid);
+                            await sock.sendMessage(replyTo, { text: `✅ Added *${qty}x ${product.name}* to cart.\n\n🛒 *Cart (${summary.itemCount} items)*\n${summary.text}\n\n💰 Total: Rs. ${summary.total.toLocaleString()}\n\nReply *"add more"* or *"checkout"* to place order.` });
+                        }
+                    } else {
+                        await sock.sendMessage(replyTo, { text: `❓ "${itemName}" not found. Send *"products"* to browse.` });
+                    }
+                } else {
+                    await sock.sendMessage(replyTo, { text: `Usage: *add [qty] [product name]*\nExample: add 2 rice` });
+                }
+                continue;
+            }
+
+            // 0e. Checkout
+            if (intent === 'CHECKOUT') {
+                const summary = cartManager.getCartSummary(senderJid);
+                if (!summary || summary.items.length === 0) {
+                    await sock.sendMessage(replyTo, { text: `🛒 Your cart is empty. Add items first!` });
+                    continue;
+                }
+                const custName = customerName || 'Customer';
+                const result = await createWhatsAppOrder(custName, phone || '', summary.items, 'CASH');
+                if (result.success) {
+                    cartManager.clearCart(senderJid);
+                    const itemLines = summary.items.map(i => `• ${i.name} x ${i.quantity} = Rs. ${(i.price * i.quantity).toLocaleString()}`).join('\n');
+                    await sock.sendMessage(replyTo, { text: `✅ *Order Placed!*\n\nInvoice: #${result.invoiceNumber}\n\n${itemLines}\n\n💰 *Total: Rs. ${summary.total.toLocaleString()}*\n\n📞 Call 0719336848 for delivery. Cash deposit only.` });
+                    // Notify owners
+                    const ownerPhones = ['94719336848', '94779336848'];
+                    for (const op of ownerPhones) {
+                        const ownerMsg = `📦 *New WhatsApp Order!*\n\nFrom: ${custName}\nPhone: ${phone}\nInvoice: #${result.invoiceNumber}\n\n${itemLines}\n\n*Total: Rs. ${summary.total.toLocaleString()}*`;
+                        try { await sock.sendMessage(`${op}@s.whatsapp.net`, { text: ownerMsg }); } catch(e) {}
+                    }
+                } else {
+                    await sock.sendMessage(replyTo, { text: `❌ Order failed: ${result.error}\nPlease call 0719336848.` });
+                }
+                continue;
+            }
+            // ═══════════ END CART ═══════════
 
             // 1. Browse category — "show kitchen items", "list cosmetics"
             if (intent === 'BROWSE_CATEGORY') {

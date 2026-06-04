@@ -204,4 +204,65 @@ async function getOverdueCustomers(daysOverdue = 7) {
     }
 }
 
-module.exports = { getPool, searchInventory, getCustomerBalance, getProductsByCategory, getAllCategories, getCustomerByPhone, createOrder, getOrdersByPhone, getOverdueCustomers };
+async function getProductByName(name) {
+    if (!name) return null;
+    const p = getPool();
+    try {
+        const res = await p.query(
+            `SELECT name, price, stock, category, COALESCE(image_url, '') as image_url
+             FROM "Product" WHERE name ILIKE $1 LIMIT 1`,
+            [`%${name}%`]
+        );
+        return res.rows[0] || null;
+    } catch (err) {
+        console.error('[DB] Product lookup error:', err.message);
+        return null;
+    }
+}
+
+async function createWhatsAppOrder(customerName, customerPhone, items, paymentType = 'CASH') {
+    const p = getPool();
+    const id = `ord_wa_${Date.now()}`;
+    const invoiceNumber = `WA${Date.now().toString(36).toUpperCase()}`;
+    const subtotal = items.reduce((sum, i) => sum + (i.price * i.quantity), 0);
+    const customerId = customerPhone ? customerPhone.replace(/[^0-9]/g, '').slice(-10) : '';
+    try {
+        // Find or create customer
+        let customerRow = null;
+        if (customerId) {
+            const existing = await p.query(`SELECT id FROM "Customer" WHERE phone LIKE $1 LIMIT 1`, [`%${customerId}%`]);
+            if (existing.rows.length > 0) {
+                customerRow = existing.rows[0].id;
+            }
+        }
+        if (!customerRow && customerPhone) {
+            const newCustId = `cust_${Date.now()}`;
+            await p.query(
+                `INSERT INTO "Customer" (id, name, phone, total_loan, total_paid, balance, created_at, updated_at)
+                 VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())`,
+                [newCustId, customerName || 'Customer', customerPhone, subtotal, 0, subtotal]
+            );
+            customerRow = newCustId;
+        }
+        // Create bill
+        await p.query(
+            `INSERT INTO "Bill" (id, invoice_number, date, customer_name, customer_id, items, subtotal, total, cash_received, payment_type, created_at, updated_at)
+             VALUES ($1, $2, NOW(), $3, $4, $5, $6, $7, $8, $9, NOW(), NOW())`,
+            [id, invoiceNumber, customerName || 'Customer', customerRow || '', JSON.stringify(items),
+             subtotal, subtotal, 0, paymentType]
+        );
+        // Deduct stock
+        for (const item of items) {
+            await p.query(
+                `UPDATE "Product" SET stock = GREATEST(0, stock - $1), updated_at = NOW() WHERE name ILIKE $2`,
+                [item.quantity, item.name]
+            );
+        }
+        return { success: true, invoiceNumber, total: subtotal, id, customerId: customerRow };
+    } catch (err) {
+        console.error('[DB] WhatsApp order error:', err.message);
+        return { success: false, error: err.message };
+    }
+}
+
+module.exports = { getPool, searchInventory, getCustomerBalance, getProductsByCategory, getAllCategories, getCustomerByPhone, createOrder, createWhatsAppOrder, getProductByName, getOrdersByPhone, getOverdueCustomers };

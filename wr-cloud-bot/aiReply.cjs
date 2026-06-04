@@ -252,7 +252,7 @@ async function aiReply(text, mode = 'auto', inventoryContext = '', financialCont
 
     const customerLine = knownCustomer ? `\nThe customer's name is "${knownCustomer}". Address them by name when replying.` : '';
 
-    const brainContext = brain.getContextString(text);
+    const brainContext = await brain.getContextString(text);
 
     const currentSystemPrompt = `You are a helpful and friendly customer service assistant for "${shop.shopName}" located at ${shop.address}.
     
@@ -266,6 +266,14 @@ WHATSAPP GROUP MONITORING:
 
 ${inventoryContext ? `LIVE INVENTORY INFO:\n${inventoryContext}\nCRITICAL: You MUST tell the customer the exact price listed in the data. Never omit the price or say "check with us" if the price is available in the list above.` : ''}
 ${financialContext ? `CUSTOMER FINANCIAL STATUS:\n${financialContext}\nProvide a warm summary of their loan, paid amount, and current balance.` : (inventoryContext ? '' : `We sell: ${shop.products.join(', ')}.`)}
+SHOPPING CART FEATURES:
+- Customers can browse products: "Show [category]" or "What do you sell?"
+- Add items: "add 2 rice" or "buy 3 paint"
+- View cart: "show cart" or "my cart"
+- Remove items: "remove rice from cart"
+- Checkout: "checkout" or "place order"
+- Clear cart: "clear cart"
+Always guide customers to use the cart for multi-item orders. If they mention buying multiple things, suggest adding to cart first.
 ${brainContext}
 Opening hours: ${shop.openingHours}.
 Contact: ${shop.phoneNumbers.join(', ')}.

@@ -39,8 +39,31 @@ function detectIntent(text) {
     if (/\b(show|list|browse|display|catalog|what.*(?:have|sell)|categories?|items? in)\b/i.test(t))
         return 'BROWSE_CATEGORY';
 
-    // Place order — "I need 2 cement", "order 5 paint", "want 3 rice"
-    if (/\b(?:need|want|order|buy|get)\s+\d+/.test(t) || /\b(?:need|want|order|buy|get)\s+.*?\s+\d+/.test(t))
+    // ─── CART INTENTS (must come before ORDER) ────────────────────────────
+    // Checkout — "checkout", "place order", "confirm order", "pay now"
+    if (/\b(checkout|check.?out|place.*order|confirm.*order|pay.*now|done.*shopping|finish.*buying)\b/.test(t))
+        return 'CHECKOUT';
+
+    // View cart — "show cart", "my cart", "what's in my cart", "cart"
+    if (/\b(show\s*cart|my\s*cart|what.?s?\s+in\s+my\s+cart|view\s*cart|open\s*cart|cart|basket|bag)\b/.test(t))
+        return 'VIEW_CART';
+
+    // Clear cart — "clear cart", "empty cart", "remove all"
+    if (/\b(clear\s*cart|empty\s*cart|remove\s*all|reset\s*cart|start\s*over)\b/.test(t))
+        return 'CLEAR_CART';
+
+    // Remove from cart — "remove rice", "remove rice from cart"
+    if (/\b(remove|delete|drop)\s+(?:from\s+cart\s+)?(.+)/.test(t))
+        return 'REMOVE_FROM_CART';
+
+    // Add to cart — "add 2 rice", "add rice to cart", "buy 3 paint"
+    if (/\b(?:add|buy|get|want|need)\s+\d*\s*\w+/.test(t) && /\b(cart|basket|bag|to\s+cart)\b/.test(t))
+        return 'ADD_TO_CART';
+    if (/\b(?:add|buy)\s+\d+\s+\w+/.test(t))
+        return 'ADD_TO_CART';
+
+    // Place order (direct) — "I need 2 cement", "order 5 paint"
+    if (/\b(?:need|want|order)\s+\d+/.test(t) || /\b(?:need|want|order)\s+.*?\s+\d+/.test(t))
         return 'ORDER';
 
     // Opening hours
