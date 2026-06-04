@@ -81,7 +81,7 @@ const { handleGroupMessage, isWatchedGroup, registerGroup } = require('./groupWa
 const { aiReply } = require('./aiReply.cjs');
 const { detectIntent } = require('./intent.cjs');
 const { handlePriceQuery, handleAvailabilityQuery, getProductDetails } = require('./productPriceHandler.cjs');
-const { searchInventory, getCustomerBalance, getProductsByCategory, getAllCategories, getCustomerByPhone, createWhatsAppOrder, getProductByName, getOrdersByPhone, getOverdueCustomers } = require('./dbHelper.cjs');
+const { searchInventory, getCustomerBalance, getProductsByCategory, getAllCategories, getCustomerByPhone, createWhatsAppOrder, getProductByName, getOrdersByPhone, getOverdueCustomers, getPopularProducts, getNewArrivals } = require('./dbHelper.cjs');
 const cartManager = require('./cartManager.cjs');
 const wrPosApi = require('./wrPosApi.cjs');
 const groupAdder = require('./groupAdder.cjs');
@@ -165,6 +165,10 @@ server.listen(PORT, () => {
 });
 
 const STOP_WORDS = new Set(['i','a','an','the','is','it','am','to','for','of','in','on','at','by','with','and','or','but','not','do','does','did','have','has','had','can','will','want','need','buy','get','some','please','me','my','you','your','how','much','what','which','where','who','are','this','that','there','here','all','any','each','every','just','now','also','very','too','was','were','been','being','would','could','should','may','might','shall','got','know','like','say','tell','ask','help','check','see','look','give','take','use','make','come','going','out','up','down','off','over','about','than','then','then','price','rate','cost','stock','available','hello','hi','hey','thanks','thank','bye']);
+
+// Per-chat pagination state: chatJid → { category, page, totalPages, products }
+const catalogState = new Map();
+const CATALOG_PAGE_SIZE = 10;
 
 function extractKeywords(text) {
     const words = text.toLowerCase()
@@ -579,11 +583,14 @@ async function connectToWhatsApp() {
                 const categoryMatch = text.match(/(?:show|list|browse|display|items? in|what)\s+(.+?)(?:\?|$)/i);
                 const searchCat = categoryMatch ? categoryMatch[1].trim() : '';
                 if (searchCat && searchCat.length > 1) {
-                    const products = await getProductsByCategory(searchCat);
+                    const result = await getProductsByCategory(searchCat, 1, CATALOG_PAGE_SIZE);
+                    const products = result.products;
                     if (products.length > 0) {
-                        const reply = `*${searchCat.toUpperCase()}*\n\n` + products.map((p, i) =>
-                            `${i + 1}. ${p.name} — Rs. ${p.price} (Stock: ${p.stock})`
-                        ).join('\n');
+                        catalogState.set(senderJid, { category: searchCat, page: 1, totalPages: result.totalPages, total: result.total });
+                        const reply = `*${searchCat.toUpperCase()}* (Page 1/${result.totalPages || 1} — ${result.total} items)\n\n` +
+                            products.map((p, i) => `${i + 1}. ${p.name} — Rs. ${p.price.toLocaleString()} (Stock: ${p.stock})`).join('\n') +
+                            (result.totalPages > 1 ? '\n\nReply *"more"* for next page or *"back"* for previous.' : '') +
+                            '\n\n_Add to cart: "add 2 [product name]"_';
                         const firstWithImage = products.find(p => p.image_url && p.image_url.startsWith('http'));
                         if (firstWithImage) {
                             await sock.sendMessage(replyTo, { image: { url: firstWithImage.image_url }, caption: reply });
@@ -594,7 +601,77 @@ async function connectToWhatsApp() {
                     }
                 }
                 const catList = cats.join(', ');
-                await sock.sendMessage(replyTo, { text: `📂 *Categories:*\n${catList}\n\nSend *"Show [category]"* to browse.` });
+                await sock.sendMessage(replyTo, { text: `📂 *Categories:*\n${catList}\n\nSend *"Show [category]"* to browse.\nSend *"popular"* for best sellers.\nSend *"new arrivals"* for latest products.` });
+                continue;
+            }
+
+            // 1b. Popular / best sellers
+            if (intent === 'POPULAR') {
+                const products = await getPopularProducts(10);
+                if (products.length > 0) {
+                    const reply = `🔥 *POPULAR PRODUCTS*\n\n` +
+                        products.map((p, i) => `${i + 1}. ${p.name} — Rs. ${p.price.toLocaleString()} (Stock: ${p.stock})`).join('\n') +
+                        '\n\n_Add to cart: "add [qty] [product name]"_';
+                    const firstWithImage = products.find(p => p.image_url && p.image_url.startsWith('http'));
+                    if (firstWithImage) {
+                        await sock.sendMessage(replyTo, { image: { url: firstWithImage.image_url }, caption: reply });
+                    } else {
+                        await sock.sendMessage(replyTo, { text: reply });
+                    }
+                } else {
+                    await sock.sendMessage(replyTo, { text: `No products found. Send *"products"* to browse catalog.` });
+                }
+                continue;
+            }
+
+            // 1c. New arrivals
+            if (intent === 'NEW_ARRIVALS') {
+                const products = await getNewArrivals(10);
+                if (products.length > 0) {
+                    const reply = `🆕 *NEW ARRIVALS*\n\n` +
+                        products.map((p, i) => `${i + 1}. ${p.name} — Rs. ${p.price.toLocaleString()} (Stock: ${p.stock})`).join('\n') +
+                        '\n\n_Add to cart: "add [qty] [product name]"_';
+                    const firstWithImage = products.find(p => p.image_url && p.image_url.startsWith('http'));
+                    if (firstWithImage) {
+                        await sock.sendMessage(replyTo, { image: { url: firstWithImage.image_url }, caption: reply });
+                    } else {
+                        await sock.sendMessage(replyTo, { text: reply });
+                    }
+                } else {
+                    await sock.sendMessage(replyTo, { text: `No new arrivals yet. Send *"products"* to browse catalog.` });
+                }
+                continue;
+            }
+
+            // 1d. Pagination — next / previous
+            if (intent === 'NEXT_PAGE' || intent === 'PREV_PAGE') {
+                const state = catalogState.get(senderJid);
+                if (!state) {
+                    await sock.sendMessage(replyTo, { text: `Send *"Show [category]"* first to start browsing.` });
+                    continue;
+                }
+                let newPage = intent === 'NEXT_PAGE' ? state.page + 1 : state.page - 1;
+                if (newPage < 1) newPage = 1;
+                if (newPage > state.totalPages) newPage = state.totalPages;
+                const result = await getProductsByCategory(state.category, newPage, CATALOG_PAGE_SIZE);
+                const products = result.products;
+                if (products.length > 0) {
+                    state.page = newPage;
+                    catalogState.set(senderJid, state);
+                    const reply = `*${state.category.toUpperCase()}* (Page ${newPage}/${result.totalPages} — ${result.total} items)\n\n` +
+                        products.map((p, i) => `${(newPage - 1) * CATALOG_PAGE_SIZE + i + 1}. ${p.name} — Rs. ${p.price.toLocaleString()} (Stock: ${p.stock})`).join('\n') +
+                        '\n\nReply *"more"* for next page or *"back"* for previous.' +
+                        '\n\n_Add to cart: "add [qty] [product name]"_';
+                    const firstWithImage = products.find(p => p.image_url && p.image_url.startsWith('http'));
+                    if (firstWithImage) {
+                        await sock.sendMessage(replyTo, { image: { url: firstWithImage.image_url }, caption: reply });
+                    } else {
+                        await sock.sendMessage(replyTo, { text: reply });
+                    }
+                } else {
+                    await sock.sendMessage(replyTo, { text: `No more products in *${state.category}*. Send *"Show [category]"* to restart.` });
+                    catalogState.delete(senderJid);
+                }
                 continue;
             }
 

@@ -78,18 +78,73 @@ async function getCustomerBalance(phone) {
     }
 }
 
-async function getProductsByCategory(category) {
-    if (!category || category.length < 2) return [];
+async function getProductsByCategory(category, page = 1, limit = 10) {
+    if (!category || category.length < 2) return { products: [], total: 0, page: 1, totalPages: 0 };
+    const p = getPool();
+    try {
+        const offset = (page - 1) * limit;
+        const countRes = await p.query(
+            `SELECT COUNT(*) as cnt FROM "Product" WHERE category ILIKE $1`,
+            [`%${category}%`]
+        );
+        const total = parseInt(countRes.rows[0]?.cnt || 0);
+        const totalPages = Math.ceil(total / limit);
+        const res = await p.query(
+            `SELECT name, price, stock, category, description, COALESCE(image_url, '') as image_url
+             FROM "Product" WHERE category ILIKE $1 ORDER BY name LIMIT $2 OFFSET $3`,
+            [`%${category}%`, limit, offset]
+        );
+        return { products: res.rows, total, page, totalPages };
+    } catch (err) {
+        console.error('[DB] Category search error:', err.message);
+        return { products: [], total: 0, page: 1, totalPages: 0 };
+    }
+}
+
+async function getPopularProducts(limit = 10) {
     const p = getPool();
     try {
         const res = await p.query(
-            `SELECT name, price, stock, category, description, COALESCE(image_url, '') as image_url FROM "Product"
-             WHERE category ILIKE $1 ORDER BY name LIMIT 10`,
-            [`%${category}%`]
+            `SELECT name, price, stock, category, COALESCE(image_url, '') as image_url
+             FROM "Product" WHERE stock > 0
+             ORDER BY stock DESC, name ASC LIMIT $1`,
+            [limit]
         );
         return res.rows;
     } catch (err) {
-        console.error('[DB] Category search error:', err.message);
+        console.error('[DB] Popular products error:', err.message);
+        return [];
+    }
+}
+
+async function getNewArrivals(limit = 10) {
+    const p = getPool();
+    try {
+        const res = await p.query(
+            `SELECT name, price, stock, category, COALESCE(image_url, '') as image_url
+             FROM "Product" WHERE created_at IS NOT NULL
+             ORDER BY created_at DESC LIMIT $1`,
+            [limit]
+        );
+        return res.rows;
+    } catch (err) {
+        console.error('[DB] New arrivals error:', err.message);
+        return [];
+    }
+}
+
+async function getProductsByIds(ids) {
+    if (!ids || ids.length === 0) return [];
+    const p = getPool();
+    try {
+        const res = await p.query(
+            `SELECT name, price, stock, category, COALESCE(image_url, '') as image_url
+             FROM "Product" WHERE id = ANY($1)`,
+            [ids]
+        );
+        return res.rows;
+    } catch (err) {
+        console.error('[DB] Products by IDs error:', err.message);
         return [];
     }
 }
@@ -265,4 +320,4 @@ async function createWhatsAppOrder(customerName, customerPhone, items, paymentTy
     }
 }
 
-module.exports = { getPool, searchInventory, getCustomerBalance, getProductsByCategory, getAllCategories, getCustomerByPhone, createOrder, createWhatsAppOrder, getProductByName, getOrdersByPhone, getOverdueCustomers };
+module.exports = { getPool, searchInventory, getCustomerBalance, getProductsByCategory, getAllCategories, getCustomerByPhone, createOrder, createWhatsAppOrder, getProductByName, getOrdersByPhone, getOverdueCustomers, getPopularProducts, getNewArrivals, getProductsByIds };

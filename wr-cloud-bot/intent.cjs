@@ -39,6 +39,20 @@ function detectIntent(text) {
     if (/\b(show|list|browse|display|catalog|what.*(?:have|sell)|categories?|items? in)\b/i.test(t))
         return 'BROWSE_CATEGORY';
 
+    // Popular / best sellers — "popular", "best sellers", "top products", "trending"
+    if (/\b(popular|best.?seller|top.?product|trending|most.?sold|hot.?item|recommend)\b/i.test(t))
+        return 'POPULAR';
+
+    // New arrivals — "new arrivals", "new products", "latest", "just arrived", "new in"
+    if (/\b(new.?arrivals?|new.?products?|latest|just.?arrived|new.?in|recently.?added)\b/i.test(t))
+        return 'NEW_ARRIVALS';
+
+    // Pagination — "next", "more", "show more", "page 2", "previous", "back"
+    if (/\b(next|more|show.?more|page\s*\d+|further|continue)\b/i.test(t))
+        return 'NEXT_PAGE';
+    if (/\b(previous|prev|back|go.?back|page.?up)\b/i.test(t))
+        return 'PREV_PAGE';
+
     // ─── CART INTENTS (must come before ORDER) ────────────────────────────
     // Checkout — "checkout", "place order", "confirm order", "pay now"
     if (/\b(checkout|check.?out|place.*order|confirm.*order|pay.*now|done.*shopping|finish.*buying)\b/.test(t))
