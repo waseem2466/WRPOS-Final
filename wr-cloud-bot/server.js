@@ -408,17 +408,17 @@ async function connectToWhatsApp() {
                         console.log(`[Group] Admin product saved to main inventory from: ${senderJid}`);
                     }
                 } else {
-                    // Auto-add from non-target groups (e.g., Cargills Food City)
+                    // Auto-invite from non-target groups (e.g., Cargills Food City)
                     const sourceGroups = (process.env.WATCHED_GROUPS || '').split(',').map(g => g.trim().toLowerCase());
                     const groupName = msg.pushName || '';
                     const isSourceGroup = sourceGroups.some(sg => groupName.toLowerCase().includes(sg)) && !groupName.toLowerCase().includes('smile');
 
                     if (isSourceGroup && !isOwner(senderJid)) {
-                        const result = await groupAdder.addToQueue(sock, knownGroups, senderJid, msg.pushName);
+                        const result = await groupAdder.queueInvite(sock, senderJid, msg.pushName);
                         if (result.success) {
-                            console.log(`[GroupAdder] Queued ${msg.pushName || senderJid} from "${groupName}"`);
+                            console.log(`[GroupInviter] Queued ${msg.pushName || senderJid} from "${groupName}"`);
                         } else {
-                            console.log(`[GroupAdder] Skipped ${senderJid}: ${result.reason}`);
+                            console.log(`[GroupInviter] Skipped ${senderJid}: ${result.reason}`);
                         }
                     }
                 }
