@@ -102,6 +102,10 @@ function detectIntent(text) {
     if (/\b(வணக்கம்|எவ்வளவு|விலை|வேணும்|இருக்கா|கிடைக்கும்|பொருள்)\b/.test(t))
         return 'GENERAL';
 
+    // Join group — "add me to group", "join group", "group link"
+    if (/\b(add\s+me\s+to\s+group|join\s+(?:the\s+)?group|group\s+link|want\s+to\s+join|enter\s+group)\b/.test(t))
+        return 'JOIN_GROUP';
+
     // Greetings
     if (/\b(hi|hello|hey|assalamu|alaikum|salam|good morning|good afternoon|good evening)\b/.test(t))
         return 'GREETING';

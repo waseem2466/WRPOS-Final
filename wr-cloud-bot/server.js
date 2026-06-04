@@ -625,7 +625,34 @@ async function connectToWhatsApp() {
                 continue;
             }
 
-            // 5. Loan / balance query
+            // ═══════════ JOIN GROUP ═══════════
+            if (intent === 'JOIN_GROUP') {
+                const groupLink = require('./shopData.cjs').whatsappGroupLink;
+                const WATCHED_GROUPS = (process.env.WATCHED_GROUPS || 'smile and supplies').split(',').map(g => g.trim().toLowerCase());
+                let groupJid = null;
+                for (const [jid, name] of knownGroups) {
+                    if (WATCHED_GROUPS.some(wg => name.toLowerCase().includes(wg))) {
+                        groupJid = jid;
+                        break;
+                    }
+                }
+                let added = false;
+                if (groupJid) {
+                    try {
+                        await sock.groupParticipantsUpdate(groupJid, [senderJid], 'add');
+                        added = true;
+                    } catch (e) {
+                        console.log(`[Group] Auto-add failed for ${senderJid}: ${e.message}`);
+                    }
+                }
+                if (added) {
+                    await sock.sendMessage(replyTo, { text: `✅ You've been added to *Smile & Supplies* group!\n\nCheck your WhatsApp groups for the new invite.` });
+                } else {
+                    await sock.sendMessage(replyTo, { text: `👥 *Join Our Group*\n\nTap the link below to join *Smile & Supplies*:\n${groupLink}\n\nIf the link doesn't work, ask the admin to add you manually.` });
+                }
+                continue;
+            }
+            // ═══════════ END JOIN GROUP ═══════════
             let financialContext = '';
             if (intent === 'LOAN_INQUIRY' || intent === 'BALANCE_CHECK') {
                 if (customer) {
