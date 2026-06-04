@@ -83,6 +83,7 @@ const { detectIntent } = require('./intent.cjs');
 const { handlePriceQuery, handleAvailabilityQuery, getProductDetails } = require('./productPriceHandler.cjs');
 const { searchInventory, getCustomerBalance, getProductsByCategory, getAllCategories, getCustomerByPhone, createWhatsAppOrder, getProductByName, getOrdersByPhone, getOverdueCustomers } = require('./dbHelper.cjs');
 const cartManager = require('./cartManager.cjs');
+const wrPosApi = require('./wrPosApi.cjs');
 
 function readJsonBody(req) {
     return new Promise((resolve, reject) => {
@@ -111,6 +112,20 @@ function sendJson(res, status, payload) {
 }
 
 const server = http.createServer(async (req, res) => {
+    // API routes (/api/*)
+    if (req.url.startsWith('/api/')) {
+        try {
+            const handled = await wrPosApi.handleRequest(req, res);
+            if (handled) return;
+        } catch (e) {
+            console.error('[API] Error:', e.message);
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: e.message }));
+            return;
+        }
+    }
+
+    // Existing /send endpoint for WhatsApp relay
     if (req.method === 'POST' && req.url === '/send') {
         try {
             if (!SEND_API_SECRET) return sendJson(res, 503, { success: false, error: 'SEND_API_SECRET is not configured' });
