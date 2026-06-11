@@ -81,10 +81,52 @@ const { handleGroupMessage, isWatchedGroup, registerGroup } = require('./groupWa
 const { aiReply } = require('./aiReply.cjs');
 const { detectIntent } = require('./intent.cjs');
 const { handlePriceQuery, handleAvailabilityQuery, getProductDetails } = require('./productPriceHandler.cjs');
-const { searchInventory, getCustomerBalance, getProductsByCategory, getAllCategories, getCustomerByPhone, createWhatsAppOrder, getProductByName, getOrdersByPhone, getOverdueCustomers, getPopularProducts, getNewArrivals } = require('./dbHelper.cjs');
+const { searchInventory, getCustomerBalance, getProductsByCategory, getAllCategories, getCustomerByPhone, createWhatsAppOrder, getProductByName, getOrdersByPhone, getOverdueCustomers, getPopularProducts, getNewArrivals, addSupplier, getSupplierByPhone, getAllSuppliers, createStockReceive } = require('./dbHelper.cjs');
 const cartManager = require('./cartManager.cjs');
 const wrPosApi = require('./wrPosApi.cjs');
 const groupAdder = require('./groupAdder.cjs');
+
+// Auto-migrate Supplier & StockReceive tables on startup
+async function migrateSupplierTables() {
+    try {
+        const { getPool } = require('./dbHelper.cjs');
+        const pool = getPool();
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS "Supplier" (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                phone TEXT NOT NULL,
+                alt_phone TEXT DEFAULT '',
+                company TEXT DEFAULT '',
+                address TEXT DEFAULT '',
+                notes TEXT DEFAULT '',
+                created_at TIMESTAMP DEFAULT NOW(),
+                updated_at TIMESTAMP DEFAULT NOW()
+            )
+        `);
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS "StockReceive" (
+                id TEXT PRIMARY KEY,
+                ref_number TEXT NOT NULL,
+                supplier_id TEXT REFERENCES "Supplier"(id),
+                supplier_name TEXT DEFAULT '',
+                supplier_phone TEXT DEFAULT '',
+                items JSONB DEFAULT '[]',
+                total_amount NUMERIC DEFAULT 0,
+                paid_amount NUMERIC DEFAULT 0,
+                payment_method TEXT DEFAULT 'CASH',
+                status TEXT DEFAULT 'RECEIVED',
+                notes TEXT DEFAULT '',
+                created_at TIMESTAMP DEFAULT NOW(),
+                updated_at TIMESTAMP DEFAULT NOW()
+            )
+        `);
+        console.log('[DB] Supplier & StockReceive tables ready');
+    } catch (e) {
+        console.error('[DB] Migration error:', e.message);
+    }
+}
+migrateSupplierTables();
 
 function readJsonBody(req) {
     return new Promise((resolve, reject) => {
@@ -470,6 +512,95 @@ async function connectToWhatsApp() {
                 if (/\b(invite stats|invite status|how many invites)\b/i.test(text)) {
                     const stats = groupAdder.getStats();
                     await sock.sendMessage(replyTo, { text: `📊 *Invite Stats*\n\nSent today: ${stats.sentToday}/${stats.dailyLimit}\nRemaining: ${stats.remaining}\nPending queue: ${stats.pending}\nProcessing: ${stats.isProcessing ? 'Yes' : 'No'}\nTotal invited (all-time): ${stats.totalInvited}` });
+                    continue;
+                }
+
+                // Owner: add supplier — "add supplier ABC Traders 0771234567 Cargills"
+                if (/\b(add supplier|add vendor|new supplier|new vendor)\b/i.test(text)) {
+                    const match = text.match(/(?:add supplier|add vendor|new supplier|new vendor)\s+(.+)/i);
+                    if (match) {
+                        const parts = match[1].trim().split(/\s+/);
+                        const name = parts[0] || '';
+                        const phone = parts[1] || '';
+                        const company = parts.slice(2).join(' ') || '';
+                        if (name && phone) {
+                            const result = await addSupplier(name, phone, '', company);
+                            if (result.success) {
+                                await sock.sendMessage(replyTo, { text: `✅ *Supplier Added!*\n\nName: ${result.name}\nPhone: ${result.phone}\nID: ${result.id}` });
+                            } else {
+                                await sock.sendMessage(replyTo, { text: `❌ Error: ${result.error}` });
+                            }
+                        } else {
+                            await sock.sendMessage(replyTo, { text: `Usage: *add supplier [name] [phone] [company]*\nExample: add supplier ABC Traders 0771234567 Cargills` });
+                        }
+                    } else {
+                        await sock.sendMessage(replyTo, { text: `Usage: *add supplier [name] [phone] [company]*` });
+                    }
+                    continue;
+                }
+
+                // Owner: list suppliers
+                if (/\b(list suppliers|all suppliers|show suppliers|suppliers list)\b/i.test(text)) {
+                    const suppliers = await getAllSuppliers();
+                    if (suppliers.length > 0) {
+                        const reply = '📋 *Suppliers*\n\n' + suppliers.map((s, i) =>
+                            `${i + 1}. ${s.name} — ${s.phone}${s.company ? ' (' + s.company + ')' : ''}`
+                        ).join('\n');
+                        await sock.sendMessage(replyTo, { text: reply });
+                    } else {
+                        await sock.sendMessage(replyTo, { text: 'No suppliers yet. Add one with: *add supplier [name] [phone]*' });
+                    }
+                    continue;
+                }
+
+                // Owner: stock receive — "stock receive [supplier] [phone] [item1 qty price, item2 qty price] [total paid]"
+                if (/\b(stock receive|received stock|receive stock|new stock|stock in)\b/i.test(text)) {
+                    const match = text.match(/(?:stock receive|received stock|receive stock|new stock|stock in)\s+(.+)/i);
+                    if (match) {
+                        const parts = match[1].trim();
+                        // Format: "supplier phone item1 qty price, item2 qty price total paid"
+                        const phoneMatch = parts.match(/^(\S+)\s+(\d+)\s+/);
+                        if (phoneMatch) {
+                            const supplierName = phoneMatch[1];
+                            const supplierPhone = phoneMatch[2];
+                            const rest = parts.slice(phoneMatch[0].length);
+                            // Parse items: "rice 10 250, oil 5 500 total 3500 paid 3500"
+                            const itemMatches = rest.match(/(\w+)\s+(\d+)\s+(\d+)/g) || [];
+                            const totalMatch = rest.match(/total\s+(\d+)/i);
+                            const paidMatch = rest.match(/paid\s+(\d+)/i);
+                            const items = itemMatches.map(m => {
+                                const [, name, qty, price] = m.match(/(\w+)\s+(\d+)\s+(\d+)/);
+                                return { name, quantity: parseInt(qty), price: parseInt(price) };
+                            });
+                            const totalAmount = totalMatch ? parseInt(totalMatch[1]) : items.reduce((s, i) => s + (i.quantity * i.price), 0);
+                            const paidAmount = paidMatch ? parseInt(paidMatch[1]) : totalAmount;
+
+                            if (items.length > 0) {
+                                const result = await createStockReceive(supplierName, supplierPhone, items, totalAmount, paidAmount);
+                                if (result.success) {
+                                    // Send receipt to supplier
+                                    const itemLines = items.map(i => `• ${i.name} x ${i.quantity} @ Rs. ${i.price} = Rs. ${(i.quantity * i.price).toLocaleString()}`).join('\n');
+                                    const receipt = `📦 *STOCK RECEIVED*\n\nRef: #${result.refNumber}\nSupplier: ${supplierName}\nPhone: ${supplierPhone}\n\n${itemLines}\n\n💰 *Total: Rs. ${totalAmount.toLocaleString()}*\n✅ *Paid: Rs. ${paidAmount.toLocaleString()}*\n\nThank you for your business!`;
+                                    // Send to supplier
+                                    try { await sock.sendMessage(`${supplierPhone}@s.whatsapp.net`, { text: receipt }); } catch(e) {}
+                                    // Notify owners
+                                    const ownerPhones = ['94719336848', '94779336848'];
+                                    for (const op of ownerPhones) {
+                                        try { await sock.sendMessage(`${op}@s.whatsapp.net`, { text: `📦 *Stock Received!*\n\nRef: #${result.refNumber}\nSupplier: ${supplierName}\n${itemLines}\n\nTotal: Rs. ${totalAmount.toLocaleString()}\nPaid: Rs. ${paidAmount.toLocaleString()}` }); } catch(e) {}
+                                    }
+                                    await sock.sendMessage(replyTo, { text: `✅ *Stock Received!*\n\nRef: #${result.refNumber}\nSupplier: ${supplierName}\n\n${itemLines}\n\n💰 Total: Rs. ${totalAmount.toLocaleString()}\n✅ Paid: Rs. ${paidAmount.toLocaleString()}\n\nReceipt sent to supplier + owners notified.` });
+                                } else {
+                                    await sock.sendMessage(replyTo, { text: `❌ Error: ${result.error}` });
+                                }
+                            } else {
+                                await sock.sendMessage(replyTo, { text: `Usage: *stock receive [supplier] [phone] [item qty price, item qty price] [total paid]*\nExample: stock receive ABC 0771234567 rice 10 250, oil 5 500 total 3500 paid 3500` });
+                            }
+                        } else {
+                            await sock.sendMessage(replyTo, { text: `Usage: *stock receive [supplier] [phone] [item qty price]*\nExample: stock receive ABC 0771234567 rice 10 250, oil 5 500 total 3500 paid 3500` });
+                        }
+                    } else {
+                        await sock.sendMessage(replyTo, { text: `Usage: *stock receive [supplier] [phone] [item qty price]*` });
+                    }
                     continue;
                 }
             }

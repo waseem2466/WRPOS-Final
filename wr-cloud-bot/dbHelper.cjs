@@ -320,4 +320,102 @@ async function createWhatsAppOrder(customerName, customerPhone, items, paymentTy
     }
 }
 
-module.exports = { getPool, searchInventory, getCustomerBalance, getProductsByCategory, getAllCategories, getCustomerByPhone, createOrder, createWhatsAppOrder, getProductByName, getOrdersByPhone, getOverdueCustomers, getPopularProducts, getNewArrivals, getProductsByIds };
+// ═══════════ SUPPLIER MANAGEMENT ═══════════
+
+async function addSupplier(name, phone, altPhone = '', company = '', address = '', notes = '') {
+    const p = getPool();
+    const id = `sup_${Date.now()}`;
+    try {
+        await p.query(
+            `INSERT INTO "Supplier" (id, name, phone, alt_phone, company, address, notes, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())`,
+            [id, name, phone, altPhone, company, address, notes]
+        );
+        return { success: true, id, name, phone };
+    } catch (err) {
+        console.error('[DB] Add supplier error:', err.message);
+        return { success: false, error: err.message };
+    }
+}
+
+async function getSupplierByPhone(phone) {
+    if (!phone) return null;
+    const p = getPool();
+    try {
+        const cleanPhone = phone.replace(/[^0-9]/g, '').slice(-10);
+        const res = await p.query(
+            `SELECT * FROM "Supplier" WHERE phone LIKE $1 OR alt_phone LIKE $1 LIMIT 1`,
+            [`%${cleanPhone}%`]
+        );
+        return res.rows[0] || null;
+    } catch (err) {
+        console.error('[DB] Supplier lookup error:', err.message);
+        return null;
+    }
+}
+
+async function getAllSuppliers() {
+    const p = getPool();
+    try {
+        const res = await p.query(`SELECT * FROM "Supplier" ORDER BY name`);
+        return res.rows;
+    } catch (err) {
+        console.error('[DB] List suppliers error:', err.message);
+        return [];
+    }
+}
+
+async function createStockReceive(supplierName, supplierPhone, items, totalAmount, paidAmount, paymentMethod = 'CASH', notes = '') {
+    const p = getPool();
+    const id = `sr_${Date.now()}`;
+    const refNumber = `SR${Date.now().toString(36).toUpperCase()}`;
+    try {
+        // Find or create supplier
+        let supplierId = null;
+        if (supplierPhone) {
+            const existing = await p.query(`SELECT id FROM "Supplier" WHERE phone LIKE $1 LIMIT 1`, [`%${supplierPhone.replace(/[^0-9]/g, '').slice(-10)}%`]);
+            if (existing.rows.length > 0) supplierId = existing.rows[0].id;
+        }
+        if (!supplierId && supplierName) {
+            const newSup = await addSupplier(supplierName, supplierPhone || '', '', '', '', '');
+            if (newSup.success) supplierId = newSup.id;
+        }
+
+        await p.query(
+            `INSERT INTO "StockReceive" (id, ref_number, supplier_id, supplier_name, supplier_phone, items, total_amount, paid_amount, payment_method, status, notes, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'RECEIVED', $10, NOW(), NOW())`,
+            [id, refNumber, supplierId || '', supplierName, supplierPhone, JSON.stringify(items), totalAmount, paidAmount, paymentMethod, notes]
+        );
+
+        // Update stock for each item
+        for (const item of items) {
+            await p.query(
+                `UPDATE "Product" SET stock = stock + $1, updated_at = NOW() WHERE name ILIKE $2`,
+                [item.quantity, item.name]
+            );
+        }
+
+        return { success: true, id, refNumber, totalAmount, paidAmount, supplierName, supplierPhone };
+    } catch (err) {
+        console.error('[DB] Stock receive error:', err.message);
+        return { success: false, error: err.message };
+    }
+}
+
+async function getStockReceiveBySupplier(phone) {
+    if (!phone) return [];
+    const p = getPool();
+    try {
+        const cleanPhone = phone.replace(/[^0-9]/g, '').slice(-10);
+        const res = await p.query(
+            `SELECT * FROM "StockReceive" WHERE supplier_phone LIKE $1 ORDER BY created_at DESC LIMIT 5`,
+            [`%${cleanPhone}%`]
+        );
+        return res.rows;
+    } catch (err) {
+        console.error('[DB] Stock receive lookup error:', err.message);
+        return [];
+    }
+}
+
+module.exports = { getPool, searchInventory, getCustomerBalance, getProductsByCategory, getAllCategories, getCustomerByPhone, createOrder, createWhatsAppOrder, getProductByName, getOrdersByPhone, getOverdueCustomers, getPopularProducts, getNewArrivals, getProductsByIds, addSupplier, getSupplierByPhone, getAllSuppliers, createStockReceive, getStockReceiveBySupplier };
