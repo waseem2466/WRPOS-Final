@@ -116,6 +116,14 @@ function detectIntent(text) {
     if (/\b(வணக்கம்|எவ்வளவு|விலை|வேணும்|இருக்கா|கிடைக்கும்|பொருள்)\b/.test(t))
         return 'GENERAL';
 
+    // Supplier inquiries — "who is your supplier", "where do you get products", "do you have suppliers"
+    if (/\b(supplier|vendor|provider|distributor|wholesale|source|where.*get|where.*buy|where.*stock|who.*supply)\b/.test(t))
+        return 'SUPPLIER_INQUIRY';
+
+    // Stock availability — "do you have rice", "is rice available", "check stock"
+    if (/\b(do you have|is.*available|check stock|in stock|out of stock|have.*in stock)\b/.test(t))
+        return 'STOCK_CHECK';
+
     // Join group — "add me to group", "join group", "group link"
     if (/\b(add\s+me\s+to\s+group|join\s+(?:the\s+)?group|group\s+link|want\s+to\s+join|enter\s+group)\b/.test(t))
         return 'JOIN_GROUP';
