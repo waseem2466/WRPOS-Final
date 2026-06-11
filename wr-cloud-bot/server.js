@@ -81,7 +81,7 @@ const { handleGroupMessage, isWatchedGroup, registerGroup } = require('./groupWa
 const { aiReply } = require('./aiReply.cjs');
 const { detectIntent } = require('./intent.cjs');
 const { handlePriceQuery, handleAvailabilityQuery, getProductDetails } = require('./productPriceHandler.cjs');
-const { searchInventory, getCustomerBalance, getProductsByCategory, getAllCategories, getCustomerByPhone, createWhatsAppOrder, getProductByName, getOrdersByPhone, getOverdueCustomers, getPopularProducts, getNewArrivals, addSupplier, getSupplierByPhone, getAllSuppliers, createStockReceive } = require('./dbHelper.cjs');
+const { searchInventory, getCustomerBalance, getProductsByCategory, getAllCategories, getCustomerByPhone, createWhatsAppOrder, getProductByName, getOrdersByPhone, getOverdueCustomers, getPopularProducts, getNewArrivals, addSupplier, getSupplierByPhone, getAllSuppliers, createStockReceive, getStockReceiveBySupplier } = require('./dbHelper.cjs');
 const cartManager = require('./cartManager.cjs');
 const wrPosApi = require('./wrPosApi.cjs');
 const groupAdder = require('./groupAdder.cjs');
@@ -549,6 +549,30 @@ async function connectToWhatsApp() {
                         await sock.sendMessage(replyTo, { text: reply });
                     } else {
                         await sock.sendMessage(replyTo, { text: 'No suppliers yet. Add one with: *add supplier [name] [phone]*' });
+                    }
+                    continue;
+                }
+
+                // Owner: get supplier — "get supplier ABC" or "supplier 0771234567"
+                if (/\b(get supplier|supplier info|show supplier|who is supplier)\b/i.test(text)) {
+                    const match = text.match(/(?:get supplier|supplier info|show supplier|who is supplier)\s+(.+)/i);
+                    if (match) {
+                        const query = match[1].trim();
+                        const supplier = await getSupplierByPhone(query);
+                        if (supplier) {
+                            const stockHistory = await getStockReceiveBySupplier(supplier.phone);
+                            let reply = `👤 *Supplier Details*\n\nName: ${supplier.name}\nPhone: ${supplier.phone}\nAlt Phone: ${supplier.alt_phone || 'N/A'}\nCompany: ${supplier.company || 'N/A'}\nAddress: ${supplier.address || 'N/A'}\nNotes: ${supplier.notes || 'N/A'}`;
+                            if (stockHistory.length > 0) {
+                                reply += '\n\n📦 *Recent Stock Received:*\n' + stockHistory.map((s, i) =>
+                                    `${i + 1}. #${s.ref_number} — Rs. ${s.total_amount.toLocaleString()} (Paid: Rs. ${s.paid_amount.toLocaleString()}) — ${new Date(s.created_at).toLocaleDateString()}`
+                                ).join('\n');
+                            }
+                            await sock.sendMessage(replyTo, { text: reply });
+                        } else {
+                            await sock.sendMessage(replyTo, { text: `Supplier not found for "${query}". Use *list suppliers* to see all.` });
+                        }
+                    } else {
+                        await sock.sendMessage(replyTo, { text: `Usage: *get supplier [name or phone]*` });
                     }
                     continue;
                 }
