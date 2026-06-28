@@ -2,9 +2,15 @@
  * Group Inviter — WR POS WhatsApp Bot
  * Extracts all members from source groups, sends fresh invite DMs.
  * Limits: 20 DMs/day with 35-60s delay between sends.
+ * Dedup: Permanent via DB "InvitedPhone" table (one person = one invite ever).
  */
 
 const shop = require('./shopData.cjs');
+const path = require('path');
+const dotenv = require('dotenv');
+
+const envPath = path.join(__dirname, '.env');
+dotenv.config({ path: envPath });
 
 const DAILY_LIMIT = parseInt(process.env.GROUP_INVITE_LIMIT || '20');
 const SEND_DELAY_MS = 35000;
@@ -15,7 +21,39 @@ let sendCount = 0;
 let lastResetDate = new Date().toDateString();
 let isProcessing = false;
 let pendingInvites = [];
-const invitedPhones = new Set(); // all-time dedup
+const invitedPhones = new Set(); // in-memory cache, backed by DB
+
+// ─── DB helpers for permanent dedup ──────────────────────────────────────────
+
+async function loadInvitedPhonesFromDB() {
+    try {
+        const { getPool } = require('./dbHelper.cjs');
+        const pool = getPool();
+        const res = await pool.query(`SELECT phone FROM "InvitedPhone"`);
+        for (const row of res.rows) {
+            invitedPhones.add(row.phone);
+        }
+        console.log(`[GroupInviter] Loaded ${invitedPhones.size} invited phones from DB`);
+    } catch (err) {
+        console.error('[GroupInviter] Failed to load invited phones:', err.message);
+    }
+}
+
+async function saveInvitedPhoneToDB(phone, name, sourceGroup) {
+    try {
+        const { getPool } = require('./dbHelper.cjs');
+        const pool = getPool();
+        await pool.query(
+            `INSERT INTO "InvitedPhone" (phone, name, source_group, invited_at) VALUES ($1, $2, $3, NOW()) ON CONFLICT (phone) DO NOTHING`,
+            [phone, name || '', sourceGroup || '']
+        );
+    } catch (err) {
+        console.error('[GroupInviter] Failed to save invited phone:', err.message);
+    }
+}
+
+// Load on startup
+loadInvitedPhonesFromDB();
 
 function resetIfNeeded() {
     const today = new Date().toDateString();
@@ -152,6 +190,8 @@ async function processQueue(sock) {
             sentToday.add(invite.phone);
             invitedPhones.add(invite.phone);
             sendCount++;
+            // Save to DB for permanent dedup (survives bot restart)
+            await saveInvitedPhoneToDB(invite.phone, invite.name, invite.sourceGroup);
             console.log(`[GroupInviter] ✅ Sent to ${invite.name} (${sendCount}/${DAILY_LIMIT} today)`);
         } catch (e) {
             console.error(`[GroupInviter] ❌ Failed to send to ${invite.name}: ${e.message}`);

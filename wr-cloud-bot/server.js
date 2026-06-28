@@ -121,7 +121,16 @@ async function migrateSupplierTables() {
                 updated_at TIMESTAMP DEFAULT NOW()
             )
         `);
-        console.log('[DB] Supplier & StockReceive tables ready');
+        // InvitedPhone table — permanent dedup for group invites (one person = one invite ever)
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS "InvitedPhone" (
+                phone TEXT PRIMARY KEY,
+                name TEXT DEFAULT '',
+                source_group TEXT DEFAULT '',
+                invited_at TIMESTAMP DEFAULT NOW()
+            )
+        `);
+        console.log('[DB] Supplier, StockReceive & InvitedPhone tables ready');
     } catch (e) {
         console.error('[DB] Migration error:', e.message);
     }
