@@ -447,19 +447,29 @@ async function connectToWhatsApp() {
 
             // ============ GROUP ============
             if (isGroup) {
-                if (isWatchedGroup(msg.key.remoteJid, msg.pushName)) {
-                    const isGroupSenderAdmin = isOwner(senderJid) || ['0779336848', '0750204698'].some(n => senderJid?.includes(n));
+                const groupJid = msg.key.remoteJid;
+                const groupName = msg.pushName || '';
+
+                // Target group = "smile and supplies" (where admins post product updates)
+                const targetGroup = (process.env.TARGET_GROUP || 'smile and supplies').toLowerCase();
+                const isTargetGroup = groupName.toLowerCase().includes(targetGroup);
+
+                // Source groups = "cargills food city kanthale 1" etc. (for member extraction only)
+                const sourceGroups = (process.env.WATCHED_GROUPS || '').split(',').map(g => g.trim().toLowerCase());
+                const isSourceGroup = sourceGroups.some(sg => groupName.toLowerCase().includes(sg)) && !groupName.toLowerCase().includes('smile');
+
+                if (isTargetGroup) {
+                    // TARGET GROUP: Only admins can post product updates
+                    const isGroupSenderAdmin = isOwner(senderJid) || ['0779336848', '0750204698', '0750204698'].some(n => senderJid?.includes(n));
                     if (isGroupSenderAdmin) {
                         await handleGroupMessage(msg, sock, true);
                         console.log(`[Group] Admin product saved to main inventory from: ${senderJid}`);
+                    } else {
+                        console.log(`[Group] Non-admin message in target group ignored: ${senderJid}`);
                     }
-                } else {
-                    // Auto-invite from non-target groups (e.g., Cargills Food City)
-                    const sourceGroups = (process.env.WATCHED_GROUPS || '').split(',').map(g => g.trim().toLowerCase());
-                    const groupName = msg.pushName || '';
-                    const isSourceGroup = sourceGroups.some(sg => groupName.toLowerCase().includes(sg)) && !groupName.toLowerCase().includes('smile');
-
-                    if (isSourceGroup && !isOwner(senderJid)) {
+                } else if (isSourceGroup) {
+                    // SOURCE GROUP: Only queue invites, NO product extraction
+                    if (!isOwner(senderJid)) {
                         const result = await groupAdder.queueInvite(sock, senderJid, msg.pushName);
                         if (result.success) {
                             console.log(`[GroupInviter] Queued ${msg.pushName || senderJid} from "${groupName}"`);
@@ -467,6 +477,9 @@ async function connectToWhatsApp() {
                             console.log(`[GroupInviter] Skipped ${senderJid}: ${result.reason}`);
                         }
                     }
+                } else {
+                    // OTHER GROUPS: Ignore completely (no extraction, no invites)
+                    console.log(`[Group] Ignored message from unknown group: ${groupName}`);
                 }
                 continue;
             }
