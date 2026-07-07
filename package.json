@@ -1,7 +1,7 @@
 {
   "name": "wr-pos",
   "private": true,
-  "version": "4.3.9",
+  "version": "4.4.0",
   "description": "WR POS - Cloud-based Billing & Management",
   "author": "WR POS Enterprise",
   "main": "electron-main.cjs",
