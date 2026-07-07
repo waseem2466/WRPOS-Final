@@ -66,7 +66,8 @@ function resetIfNeeded() {
 }
 
 function buildInviteMessage(name) {
-    return `🎉 *Welcome to WR Smile & Supplies!*
+    const communityLink = shop.whatsappCommunityLink || shop.whatsappGroupLink;
+    return `🎉 *Welcome to Smile & Supplies!*
 
 Hi ${name}! 👋
 
@@ -75,38 +76,42 @@ We noticed you're part of our local community and wanted to introduce ourselves.
 *Who we are:*
 📍 Mullipothana 96, Kandy Road, Trincomalee District
 🕐 Open 8:00 AM – 8:00 PM (Every day)
+📧 smileandsupplies@outlook.com
 
 *What we offer:*
 📱 Phone accessories — cases, chargers, earphones, screen guards
-🍳 Kitchen appliances — cookware, storage, utensils
+🍳 Kitchen accessories — cookware, storage, utensils
+🏠 Home essentials — organizers, decor, utilities
+👶 Kids' items — toys, school supplies, accessories
 📚 Stationery — notebooks, pens, art supplies
 💄 Cosmetics — skincare, makeup, personal care
 🎁 Gifts & ornaments — birthday, wedding, special occasions
 🖨️ Photocopy & printing — documents, banners, cards
 
-*Why join our group?*
+*Why join our community?*
 ✅ Daily deals & flash sales
 ✅ New product announcements
 ✅ Exclusive member discounts
 ✅ Direct ordering via WhatsApp
-✅ Free delivery on select items
+✅ Island-wide delivery 🚚
 
 *How to order:*
-1. Browse our group for products
-2. Reply with the item name + quantity
-3. We'll confirm and send payment details
-4. Bank transfer or pay in-store
-5. We deliver island-wide! 🚚
+1. Browse our catalog: *"Show [category]"*
+2. Add items: *"add 2 [product]"*
+3. Checkout: *"checkout"*
+4. Bank transfer to BOC 95733864
+5. Send deposit slip to confirm
+6. We deliver island-wide! 🚚
 
 *Bank Details:*
 🏦 BOC (Bank of Ceylon)
- Account: 95733864
- Name: N K W Khan
+Account: 95733864
+Name: N K W Khan
 
 📞 Contact: ${shop.phoneNumbers.join(' | ')}
 
-👇 *Tap below to join our group:*
-${GROUP_LINK}
+👇 *Tap below to join our WhatsApp Community:*
+${communityLink}
 
 See you there! 🛍️`;
 }
