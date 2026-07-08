@@ -292,13 +292,20 @@ async function startDailySummary(sock) {
             const p = require('./dbHelper.cjs').getPool ? require('./dbHelper.cjs').getPool() : null;
             if (!p) { console.log('[Summary] Pool not ready'); return; }
             const twentyFourH = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-            const bills = await p.query(`SELECT COUNT(*) as cnt, COALESCE(SUM(total), 0) as rev FROM "Bill" WHERE created_at >= $1`, [twentyFourH]);
-            const newCustomers = await p.query(`SELECT COUNT(*) as cnt FROM "Customer" WHERE created_at >= $1`, [twentyFourH]);
+            const [bills, newCustomers, lowStock, topProducts] = await Promise.all([
+                p.query(`SELECT COUNT(*) as cnt, COALESCE(SUM(total), 0) as rev FROM "Bill" WHERE created_at >= $1`, [twentyFourH]),
+                p.query(`SELECT COUNT(*) as cnt FROM "Customer" WHERE created_at >= $1`, [twentyFourH]),
+                p.query(`SELECT COUNT(*) as cnt FROM "Product" WHERE stock <= 5`),
+                p.query(`SELECT name, stock, price FROM "Product" ORDER BY stock DESC LIMIT 5`)
+            ]);
             const orderCount = bills.rows[0]?.cnt || '0';
             const revenue = Number(bills.rows[0]?.rev || 0);
             const newCust = newCustomers.rows[0]?.cnt || '0';
+            const lowStockCount = lowStock.rows[0]?.cnt || '0';
+            const topItems = topProducts.rows.map(r => `  • ${r.name} — ${r.stock} left`).join('\n');
+            const now = new Date().toLocaleString('en-LK', { timeZone: 'Asia/Colombo' });
+            const summary = `📊 *DAILY SALES REPORT*\n━━━━━━━━━━━━━━━━━━━━\n📅 ${now}\n\n🧾 *Orders:* ${orderCount}\n💰 *Revenue:* Rs. ${revenue.toLocaleString()}\n👥 *New Customers:* ${newCust}\n⚠️ *Low Stock Items:* ${lowStockCount}\n\n📦 *Top Products:*\n${topItems || '  No data'}\n\n🤖 Bot: ${knownContacts.size} active contacts`;
             const ownerJids = ['94719336848@s.whatsapp.net', '94779336848@s.whatsapp.net'];
-            const summary = `📊 *Daily Summary (Last 24h)*\n\n🧾 Orders: ${orderCount}\n💰 Revenue: Rs. ${revenue}\n👥 New Customers: ${newCust}\n\nBot status: ${knownContacts.size} active WhatsApp contacts`;
             for (const oj of ownerJids) {
                 try { await sendWithTimeout(sock, oj, { text: summary }); } catch(e) {}
             }
@@ -349,6 +356,77 @@ async function startAutoBackup(sock) {
     setTimeout(() => { run(); setInterval(run, 24 * 60 * 60 * 1000); }, next3AM - now);
 }
 
+// ═══════════ LOW STOCK ALERTS ═══════════
+async function startLowStockAlerts(sock) {
+    console.log('[LowStock] Low stock alert scheduler started (every 6h)');
+    const LOW_STOCK_THRESHOLD = parseInt(process.env.LOW_STOCK_THRESHOLD || '5');
+    const run = async () => {
+        try {
+            const p = require('./dbHelper.cjs').getPool ? require('./dbHelper.cjs').getPool() : null;
+            if (!p) return;
+            const res = await p.query(
+                `SELECT name, stock, category, price FROM "Product" WHERE stock <= $1 ORDER BY stock ASC`,
+                [LOW_STOCK_THRESHOLD]
+            );
+            if (res.rows.length === 0) return;
+            const ownerJids = ['94719336848@s.whatsapp.net', '94779336848@s.whatsapp.net'];
+            const itemList = res.rows.map((r, i) =>
+                `${i + 1}. ${r.name} — *${r.stock} left* (Rs. ${r.price}) [${r.category}]`
+            ).join('\n');
+            const msg = `⚠️ *LOW STOCK ALERT*\n\n${res.rows.length} product${res.rows.length > 1 ? 's' : ''} running low:\n\n${itemList}\n\n📉 Threshold: ≤${LOW_STOCK_THRESHOLD} units\n⏰ Checked: ${new Date().toLocaleString('en-LK', { timeZone: 'Asia/Colombo' })}`;
+            for (const oj of ownerJids) {
+                try { await sendWithTimeout(sock, oj, { text: msg }); } catch(e) {}
+            }
+            console.log(`[LowStock] Alert sent: ${res.rows.length} low stock items`);
+        } catch (e) {
+            console.error('[LowStock] Error:', e.message);
+        }
+    };
+    // Check every 6 hours
+    setInterval(run, 6 * 60 * 60 * 1000);
+    // First check after 5 minutes of startup
+    setTimeout(run, 5 * 60 * 1000);
+}
+
+// ═══════════ PRODUCT IMAGE UPLOAD (via WhatsApp) ═══════════
+async function handleProductImageUpload(sock, senderJid, msg) {
+    try {
+        const imageMsg = msg.message?.imageMessage;
+        if (!imageMsg) return false;
+        const caption = imageMsg.caption || '';
+        // Format: "image [product name]" or just "image" with reply to product message
+        const match = caption.match(/^image\s+(.+)/i);
+        if (!match && !caption.toLowerCase().startsWith('image')) return false;
+        const productName = match ? match[1].trim() : '';
+        if (!productName) return false;
+        // Download image
+        const { downloadMediaMessage } = require('@whiskeysockets/baileys');
+        let messageToDownload = msg;
+        if (!imageMsg.url && sock?.updateMediaMessage) {
+            messageToDownload = await sock.updateMediaMessage(msg);
+        }
+        const buffer = await downloadMediaMessage(messageToDownload, 'buffer', {});
+        if (!buffer || buffer.length === 0) return false;
+        // Upload to catbox.moe (free image hosting)
+        const FormData = require('form-data');
+        const form = new FormData();
+        form.append('reqtype', 'fileupload');
+        form.append('fileToUpload', buffer, { filename: 'product.jpg', contentType: 'image/jpeg' });
+        const uploadRes = await fetch('https://catbox.moe/user/api.php', { method: 'POST', body: form });
+        const imageUrl = await uploadRes.text();
+        if (!imageUrl || !imageUrl.startsWith('http')) return false;
+        // Update product in DB
+        const p = require('./dbHelper.cjs').getPool();
+        await p.query(`UPDATE "Product" SET image_url = $1, updated_at = NOW() WHERE name ILIKE $2`, [imageUrl, `%${productName}%`]);
+        await sendWithTimeout(sock, senderJid, { text: `✅ *Image uploaded!*\n\nProduct: ${productName}\nImage: ${imageUrl}` });
+        console.log(`[Image] Uploaded image for "${productName}"`);
+        return true;
+    } catch (e) {
+        console.error('[Image] Upload error:', e.message);
+        return false;
+    }
+}
+
 async function connectToWhatsApp() {
     console.log('Starting WR POS Cloud WhatsApp Bot...');
     console.log(`[WhatsApp] Auth directory: ${AUTH_DIR}`);
@@ -391,6 +469,7 @@ async function connectToWhatsApp() {
             startPaymentReminders(sock);
             startDailySummary(sock);
             startAutoBackup(sock);
+            startLowStockAlerts(sock);
         }
     });
 
@@ -495,6 +574,12 @@ async function connectToWhatsApp() {
 
             // ============ DM ============
             knownContacts.add(senderJid);
+
+            // Handle image uploads for product images (owner only)
+            if (isOwner(senderJid) && msg.message?.imageMessage) {
+                const imageHandled = await handleProductImageUpload(sock, senderJid, msg);
+                if (imageHandled) continue;
+            }
 
             // Owner commands
             if (isOwner(senderJid)) {
