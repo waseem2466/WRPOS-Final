@@ -385,6 +385,17 @@ export const BillingPOS: React.FC = () => {
         searchInputRef.current?.focus();
       }
 
+      // F4: Quick Cash Sale (instant billing for walk-in customers)
+      if (e.key === 'F4') {
+        if (cart.length > 0 && !successBill && !isSaving) {
+          e.preventDefault();
+          setSelectedCustomerId('');
+          setCustomerSearch('Walk-in Customer');
+          setCashReceived(totals.total);
+          setTimeout(() => handleCheckout(), 100);
+        }
+      }
+
       // Escape: Close dropdowns
       if (e.key === 'Escape') {
         setShowProductDropdown(false);
@@ -1702,6 +1713,25 @@ export const BillingPOS: React.FC = () => {
                 >
                 {isSaving ? <Loader2 className="animate-spin" size={16} /> : <Check size={16} />}
                 {posMode === 'SALE' ? 'Authorize Sale (F2)' : 'Complete Return (F2)'}
+              </button>
+
+              {/* Quick Cash Button — instant billing for random/walk-in customers */}
+              <button
+                onClick={() => {
+                  if (cart.length === 0) return;
+                  // Set customer to Walk-in and complete sale immediately
+                  setSelectedCustomerId('');
+                  setCustomerSearch('Walk-in Customer');
+                  // Auto-set cash received to exact total
+                  setCashReceived(totals.total);
+                  // Trigger checkout
+                  setTimeout(() => handleCheckout(), 100);
+                }}
+                disabled={isSaving || cart.length === 0}
+                className="w-full py-3.5 premium-button tap-lift bg-gradient-to-r from-emerald-600 to-emerald-500 text-white rounded-2xl font-black text-[10px] uppercase tracking-[0.18em] shadow-xl shadow-emerald-600/20 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+              >
+                {isSaving ? <Loader2 className="animate-spin" size={16} /> : <Banknote size={16} />}
+                Quick Cash Sale (F4)
               </button>
 
               <div className="grid grid-cols-2 gap-2">
