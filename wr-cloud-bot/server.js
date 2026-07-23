@@ -13,6 +13,7 @@ const AUTH_ZIP = process.env.AUTH_ZIP || path.join(process.cwd(), 'auth.bin');
 const DEFAULT_AUTH_FOLDER = 'baileys_auth_info';
 const SEND_API_SECRET = process.env.SEND_API_SECRET || '';
 let activeSock = null;
+let latestQR = null;  // Store latest QR for web display
 
 function restoreAuthFromZip() {
     if (fs.existsSync(path.join(AUTH_DIR, 'creds.json'))) return;
@@ -177,7 +178,45 @@ const server = http.createServer(async (req, res) => {
         }
     }
 
-    // Existing /send endpoint for WhatsApp relay
+    // /status — debug endpoint
+    if (req.url === '/status') {
+        return sendJson(res, 200, {
+            bot: 'WR POS Cloud Bot',
+            whatsapp: activeSock ? 'connected' : 'disconnected',
+            qrAvailable: !!latestQR,
+            uptime: Math.floor(process.uptime()) + 's',
+            time: new Date().toISOString()
+        });
+    }
+
+    // /qr — scan QR directly from browser if auth fails
+    if (req.url === '/qr') {
+        if (activeSock) {
+            res.writeHead(200, { 'Content-Type': 'text/html' });
+            return res.end('<html><body style="font-family:sans-serif;text-align:center;padding:40px"><h2 style="color:green">✅ WhatsApp Already Connected!</h2><p>The bot is online and responding.</p></body></html>');
+        }
+        if (!latestQR) {
+            res.writeHead(200, { 'Content-Type': 'text/html' });
+            return res.end('<html><body style="font-family:sans-serif;text-align:center;padding:40px"><h2>⏳ Generating QR...</h2><p>Refresh in 10 seconds.</p><script>setTimeout(()=>location.reload(),10000)</script></body></html>');
+        }
+        // Generate QR as data URL using qrcode
+        try {
+            const QRCode = require('qrcode');
+            const qrDataUrl = await QRCode.toDataURL(latestQR, { width: 350, margin: 2 });
+            res.writeHead(200, { 'Content-Type': 'text/html' });
+            return res.end(`<html><head><title>WR POS Bot QR</title></head><body style="font-family:sans-serif;text-align:center;padding:40px;background:#0f0f1a;color:white">
+<h2 style="color:#25D366">📱 Scan to Activate WhatsApp Bot</h2>
+<p style="color:#aaa">WhatsApp → ⋮ → Linked Devices → Link a Device</p>
+<img src="${qrDataUrl}" style="border-radius:16px;padding:12px;background:white;width:300px" />
+<p style="color:#888;font-size:12px">QR refreshes every 60s. If expired, reload this page.</p>
+<script>setTimeout(()=>location.reload(),60000)</script>
+</body></html>`);
+        } catch(e) {
+            return sendJson(res, 500, { error: 'QR generation failed: ' + e.message });
+        }
+    }
+
+    // /send endpoint for WhatsApp relay
     if (req.method === 'POST' && req.url === '/send') {
         try {
             if (!SEND_API_SECRET) return sendJson(res, 503, { success: false, error: 'SEND_API_SECRET is not configured' });
@@ -450,8 +489,9 @@ async function connectToWhatsApp() {
     sock.ev.on('connection.update', (update) => {
         const { connection, lastDisconnect, qr } = update;
         if (qr) {
+            latestQR = qr;  // Store for /qr web endpoint
             console.log('\n=========================================');
-            console.log(' SCAN THIS QR CODE WITH WHATSAPP ');
+            console.log(' QR READY — visit /qr to scan from browser ');
             console.log('=========================================\n');
         }
         if (connection === 'close') {
