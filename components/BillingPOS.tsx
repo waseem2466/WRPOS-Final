@@ -9,6 +9,7 @@ import {
 import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { db, generateId } from '../services/mockDb';
 import { whatsappService } from '../services/whatsapp';
+import { tmHubService } from '../services/tmHubService';
 import { autoSendWhatsAppBill } from '../services/whatsappAutoSend';
 import { pdfService } from '../services/pdfService';
 import { Bill, BillItem, BusinessSettings, Customer, Product } from '../types';
@@ -16,6 +17,7 @@ import { GlassCard } from './ui/GlassCard';
 import { GlassInput } from './ui/GlassInput';
 import { audioService } from '../services/audio';
 import { useAuth } from '../context/AuthContext';
+import { errorHandler } from '../services/errorHandler';
 
 const toNum = (val: any) => { const n = Number(val); return isNaN(n) ? 0 : n; };
 const round2 = (n: number) => Math.round(n * 100) / 100;
@@ -291,6 +293,9 @@ export const BillingPOS: React.FC = () => {
   const [cart, setCart] = useState<BillItem[]>([]);
   const [selectedCustomerId, setSelectedCustomerId] = useState<string>('');
   const [cashReceived, setCashReceived] = useState<number | ''>('');
+  const [cardReceived, setCardReceived] = useState<number | ''>('');
+  const [parkedBills, setParkedBills] = useState<{ id: string, name: string, cart: BillItem[], customerId: string, customerSearch: string }[]>([]);
+  const [showParkedModal, setShowParkedModal] = useState(false);
   const [successBill, setSuccessBill] = useState<Bill | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [isPdfGenerating, setIsPdfGenerating] = useState(false);
@@ -320,7 +325,11 @@ export const BillingPOS: React.FC = () => {
   const [showBarcodeScanner, setShowBarcodeScanner] = useState(false);
   const [isScannerActive, setIsScannerActive] = useState(false);
   const [showManualProduct, setShowManualProduct] = useState(false);
-  const [manualProductForm, setManualProductForm] = useState({ name: '', sku: '', costPrice: '', sellPrice: '', quantity: '' });
+  const [manualProductForm, setManualProductForm] = useState({ name: '', sku: '', costPrice: '', sellPrice: '', quantity: '1' });
+  const [isWholesaleMode, setIsWholesaleMode] = useState(false);
+  const [manualNotice, setManualNotice] = useState('');
+  const manualProductNameRef = useRef<HTMLInputElement>(null);
+  const cartEndRef = useRef<HTMLDivElement>(null);
   const barcodeInputRef = useRef<HTMLInputElement>(null);
 
   const customerSearchRef = useRef<HTMLDivElement>(null);
@@ -329,6 +338,12 @@ export const BillingPOS: React.FC = () => {
   const newSaleBtnRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => { loadData(); }, []);
+
+  useEffect(() => {
+    if (cart.length > 0) {
+      cartEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [cart.length]);
 
   useEffect(() => {
     const handlePointerDown = (event: MouseEvent) => {
@@ -358,7 +373,16 @@ export const BillingPOS: React.FC = () => {
 
   // ─── Keyboard Shortcuts ──────────────────────────────────────────────────────
   useEffect(() => {
+
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      // Barcode scanner buffer logic
+      if (e.key === 'Enter') {
+        if (barcodeInput.length > 2 && !showCustomerDropdown && !showQuickCust && !showManualService && !showReloadService) {
+          // It might be a barcode scan if it was fast enough. We'll handle this in a separate effect that tracks timing, 
+          // or we can just rely on the search input if focused. But a dedicated buffer is better.
+        }
+      }
+
       // F1: Focus Search
       if (e.key === 'F1') {
         e.preventDefault();
@@ -409,7 +433,67 @@ export const BillingPOS: React.FC = () => {
 
     window.addEventListener('keydown', handleGlobalKeyDown);
     return () => window.removeEventListener('keydown', handleGlobalKeyDown);
-  }, [cart, successBill, isSaving]);
+  }, [cart, successBill, isSaving, barcodeInput, showCustomerDropdown, showQuickCust, showManualService, showReloadService]);
+
+  // ─── Global Barcode Scanner Listener ─────────────────────────────────────────
+  useEffect(() => {
+    let barcodeBuffer = '';
+    let lastKeyTime = Date.now();
+    let scanTimeout: any = null;
+
+    const handleGlobalBarcodeScan = (e: KeyboardEvent) => {
+      // Ignore if typing in input fields other than search
+      const target = e.target as HTMLElement;
+      if (
+        target.tagName === 'INPUT' || 
+        target.tagName === 'TEXTAREA' || 
+        target.isContentEditable
+      ) {
+        if (target !== searchInputRef.current) return;
+      }
+
+      const currentTime = Date.now();
+      
+      // If time between keystrokes is too long (>50ms), it's human typing, reset buffer
+      if (currentTime - lastKeyTime > 50) {
+        barcodeBuffer = '';
+      }
+
+      if (e.key === 'Enter' && barcodeBuffer.length > 2) {
+        e.preventDefault();
+        const scannedCode = barcodeBuffer;
+        barcodeBuffer = '';
+        
+        // Auto-search and add
+        const scan = parseProductScanValue(scannedCode);
+        if (!scan.raw) return;
+        const rawLower = scan.raw.toLowerCase();
+        const product = products.find(p =>
+          (scan.id && String(p.id) === scan.id) ||
+          (scan.sku && String(p.sku || '').toLowerCase() === scan.sku.toLowerCase()) ||
+          (scan.barcode && String(p.barcode || '').toLowerCase() === scan.barcode.toLowerCase()) ||
+          String(p.sku || '').toLowerCase() === rawLower ||
+          String(p.barcode || '').toLowerCase() === rawLower
+        );
+        
+        if (product) {
+          addToCart(product);
+          setSearch('');
+          setShowProductDropdown(false);
+        } else {
+          audioService.playError();
+          errorHandler.log('BillingPOS', `Product with code ${scannedCode} not found`, { scannedCode }, 'low');
+        }
+      } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        barcodeBuffer += e.key;
+      }
+      
+      lastKeyTime = currentTime;
+    };
+
+    window.addEventListener('keydown', handleGlobalBarcodeScan, true);
+    return () => window.removeEventListener('keydown', handleGlobalBarcodeScan, true);
+  }, [products]);
 
   const loadData = async () => {
     const [p, c, s, b] = await Promise.all([db.products.getAll(), db.customers.getAll(), db.settings.get(), db.bills.getAll()]);
@@ -447,7 +531,7 @@ export const BillingPOS: React.FC = () => {
     });
 
     const netTotal = Math.max(0, subtotal - totalDiscount - toNum(billDiscount));
-    const received = cashReceived === '' ? 0 : toNum(cashReceived);
+    const received = (cashReceived === '' ? 0 : toNum(cashReceived)) + (cardReceived === '' ? 0 : toNum(cardReceived));
     return {
       subtotal: round2(subtotal),
       total: round2(netTotal),
@@ -496,7 +580,9 @@ export const BillingPOS: React.FC = () => {
       return;
     }
 
-    const actualPaid = cashReceived === '' ? 0 : toNum(cashReceived);
+    const actualCash = cashReceived === '' ? 0 : toNum(cashReceived);
+    const actualCard = cardReceived === '' ? 0 : toNum(cardReceived);
+    const actualPaid = actualCash + actualCard;
     if (totals.total - actualPaid > 0.01 && !selectedCustomerId) {
       alert("Please assign a customer for credit sales."); return;
     }
@@ -507,22 +593,26 @@ export const BillingPOS: React.FC = () => {
     try {
       const customer = customers.find(c => String(c.id) === String(selectedCustomerId));
       const isLoan = totals.total - actualPaid > 0.01;
+      let pType: any = isLoan ? 'LOAN' : 'CASH';
+      if (!isLoan && actualCash > 0 && actualCard > 0) pType = 'SPLIT';
+      else if (!isLoan && actualCard > 0 && actualCash === 0) pType = 'CARD';
 
-      const bill: Bill = {
+      const bill: any = {
         id: generateId(),
         invoiceNumber: `INV-${Date.now().toString().slice(-8).toUpperCase()}`,
         date: new Date().toISOString(),
         customerId: selectedCustomerId || null,
-        customerName: customer ? customer.name : 'CASH SALE',
+        customerName: customer ? customer.name : (customerSearch.trim() ? customerSearch.trim() : 'Walk-in Customer'),
         items: cart.map(i => ({ ...i, lineId: generateId() })),
         subtotal: totals.subtotal,
         totalCost: round2(cart.reduce((sum, i) => sum + ((toNum(i.cost) + (i.warranty ? toNum(i.warrantyCost) : 0)) * toNum(i.quantity)), 0)),
         totalProfit: totals.totalProfit,
         discount: totals.totalDiscount,
         total: totals.total,
-        cashReceived: actualPaid,
+        cashReceived: actualCash,
+        cardReceived: actualCard,
         changeReturned: totals.change,
-        paymentType: isLoan ? 'LOAN' : 'CASH',
+        paymentType: pType,
         dueDate: isLoan ? dueDate || undefined : undefined
       };
 
@@ -535,7 +625,7 @@ export const BillingPOS: React.FC = () => {
       }
 
       setSuccessBill(bill);
-      setCart([]); setCashReceived(''); setSelectedCustomerId(''); setCustomerSearch(''); setDueDate(''); setBillDiscount('');
+      setCart([]); setCashReceived(''); setCardReceived(''); setSelectedCustomerId(''); setCustomerSearch(''); setDueDate(''); setBillDiscount('');
 
       // Load data in background
       loadData().catch(e => console.error("Load Data Error", e));
@@ -581,14 +671,18 @@ export const BillingPOS: React.FC = () => {
       if (existing) return prev.map(i => i.productId === String(product.id) ? { ...i, quantity: i.quantity + 1 } : i);
       const warranty = Boolean(product.hasWarranty);
       const warrantyStartDate = warranty ? new Date().toISOString() : undefined;
+      const targetPrice = isWholesaleMode && product.wholesalePrice && Number(product.wholesalePrice) > 0
+        ? toNum(product.wholesalePrice)
+        : toNum(product.price);
+
       return [...prev, {
         productId: String(product.id),
         name: product.name,
         sku: product.sku || 'N/A',
         quantity: 1,
         cost: toNum(product.cost),
-        price: toNum(product.price),
-        profit: toNum(product.price) - toNum(product.cost),
+        price: targetPrice,
+        profit: targetPrice - toNum(product.cost),
         discountValue: 0,
         discountType: 'FIXED',
         warranty,
@@ -646,6 +740,27 @@ export const BillingPOS: React.FC = () => {
     } finally {
       setIsSavingRequest(false);
     }
+  };
+
+  const handleParkBill = () => {
+    if (cart.length === 0) return;
+    const parkName = prompt("Enter a reference name for this parked bill:", `Hold ${parkedBills.length + 1}`);
+    if (!parkName) return;
+    setParkedBills(prev => [...prev, { id: generateId(), name: parkName, cart: [...cart], customerId: selectedCustomerId, customerSearch }]);
+    setCart([]);
+    setSelectedCustomerId('');
+    setCustomerSearch('');
+    setCashReceived('');
+    setCardReceived('');
+  };
+
+  const handleRestoreParked = (index: number) => {
+    const p = parkedBills[index];
+    setCart(p.cart);
+    setSelectedCustomerId(p.customerId);
+    setCustomerSearch(p.customerSearch);
+    setParkedBills(prev => prev.filter((_, i) => i !== index));
+    setShowParkedModal(false);
   };
 
   const updateCartQty = (idx: number, delta: number) => {
@@ -713,10 +828,10 @@ export const BillingPOS: React.FC = () => {
   };
 
   // Manual product entry
-  const addManualProduct = async () => {
+  const addManualProduct = async (keepOpen = false) => {
     const { name, sku, costPrice, sellPrice, quantity } = manualProductForm;
     if (!name || !costPrice || !sellPrice || !quantity) {
-      alert('Please fill all fields');
+      alert('Please fill all required fields (Product Name, Cost Price, Sell Price, Quantity)');
       return;
     }
 
@@ -724,7 +839,7 @@ export const BillingPOS: React.FC = () => {
       productId: 'manual-' + Date.now(),
       name: name,
       sku: sku || 'MANUAL',
-      quantity: parseInt(quantity),
+      quantity: parseInt(quantity) || 1,
       cost: toNum(costPrice),
       price: toNum(sellPrice),
       profit: toNum(sellPrice) - toNum(costPrice),
@@ -734,8 +849,16 @@ export const BillingPOS: React.FC = () => {
     };
 
     setCart(prev => [...prev, item]);
-    setManualProductForm({ name: '', sku: '', costPrice: '', sellPrice: '', quantity: '' });
-    setShowManualProduct(false);
+    setManualProductForm({ name: '', sku: '', costPrice: '', sellPrice: '', quantity: '1' });
+
+    if (keepOpen) {
+      setManualNotice(`Added "${name}" to cart!`);
+      setTimeout(() => setManualNotice(''), 2500);
+      setTimeout(() => manualProductNameRef.current?.focus(), 100);
+    } else {
+      setShowManualProduct(false);
+      setManualNotice('');
+    }
   };
 
   const resetPrintCopyService = () => {
@@ -795,7 +918,14 @@ export const BillingPOS: React.FC = () => {
     setReloadForm({ operator: 'Dialog', phone: '', amount: '100', commission: '0' });
   };
 
-  const addReloadService = () => {
+  const RELOAD_PROVIDER_CODES: Record<string, string> = {
+    DIALOG: '101',
+    MOBITEL: '104',
+    AIRTEL: '105',
+    HUTCH: '106',
+  };
+
+  const addReloadService = async () => {
     const operator = reloadForm.operator || 'Dialog';
     const phone = reloadForm.phone.trim();
     const amount = toNum(reloadForm.amount);
@@ -823,6 +953,24 @@ export const BillingPOS: React.FC = () => {
     audioService.playBeep();
     resetReloadService();
     setShowReloadService(false);
+
+    // Asynchronously dispatch TM Hub Reload API request & WhatsApp receipt with group link
+    try {
+      const cleanMobile = phone.replace(/[^0-9]/g, '');
+      const res = await tmHubService.requestRecharge({
+        mobile: cleanMobile,
+        amount,
+        providerCode: RELOAD_PROVIDER_CODES[operator.toUpperCase()] || '101',
+      });
+
+      if (settings && cleanMobile) {
+        const orderId = res.orderId || `ORD_${Date.now()}`;
+        const waMsg = whatsappService.generateReloadReceiptMessage(cleanMobile, amount, operator, orderId, res.status || 'SUCCESS', settings);
+        await whatsappService.sendDirect(settings, cleanMobile, waMsg).catch(() => {});
+      }
+    } catch (err) {
+      console.warn('Background TM Hub reload API call error:', err);
+    }
   };
 
   const removeFromCart = (idx: number) => {
@@ -903,12 +1051,24 @@ export const BillingPOS: React.FC = () => {
 
     setInvoiceWASending(true);
     try {
-      const url = await pdfService.generateInvoice(bill, settings, customer);
-      setInvoiceUrl(url);
+      let url = '';
+      try {
+        url = await pdfService.generateInvoice(bill, settings, customer, { download: false });
+        setInvoiceUrl(url);
+      } catch (pdfErr) {
+        console.warn('PDF upload skipped/failed, sending text receipt:', pdfErr);
+      }
+
       await whatsappService.sendBillTemplate(settings, customer, bill, { invoiceUrl: url });
-      alert('Invoice PDF sent to WhatsApp.');
+      alert('✅ Invoice receipt sent via WhatsApp!');
     } catch (e: any) {
-      alert('Failed to send invoice to WhatsApp: ' + e.message);
+      const msg = whatsappService.generateReceiptMessage(bill, settings);
+      const shouldOpenDirect = window.confirm(
+        `Automated send notice:\n${e.message}\n\nWould you like to open WhatsApp Web / App directly to send this receipt?`
+      );
+      if (shouldOpenDirect) {
+        whatsappService.openDirectWhatsApp(customer.phone, msg);
+      }
     } finally {
       setInvoiceWASending(false);
     }
@@ -1127,6 +1287,10 @@ export const BillingPOS: React.FC = () => {
     }).slice(0, 12); // Show more results
   }, [search, products]);
 
+  const quickFavorites = useMemo(() => {
+    return products.slice(0, 8);
+  }, [products]);
+
   const filteredCustomers = useMemo(() => {
     if (!customerSearch) return [];
 
@@ -1232,8 +1396,8 @@ export const BillingPOS: React.FC = () => {
           backdropFilter: 'blur(24px)',
           WebkitBackdropFilter: 'blur(24px)',
         }}>
-          <div className="p-5 border-b border-white/5 bg-black/10 overflow-visible">
-            <div className="flex gap-3 mb-3 overflow-visible items-start">
+          <div className="p-4 sm:p-5 border-b border-white/10 bg-[#080d1e]/95 backdrop-blur-2xl sticky top-0 z-[650] shrink-0 rounded-t-[2rem]">
+            <div className="flex gap-3 overflow-visible items-center">
               <div ref={productSearchRef} className="relative flex-1 overflow-visible">
                 <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-blue-200/45" size={18} />
                 <GlassInput
@@ -1366,6 +1530,23 @@ export const BillingPOS: React.FC = () => {
             </div>
           </div>
 
+          {quickFavorites.length > 0 && (
+            <div className="px-4 pb-2 border-b border-white/5 bg-black/10">
+              <div className="grid grid-cols-4 sm:grid-cols-8 gap-2">
+                {quickFavorites.map(p => (
+                  <button
+                    key={p.id}
+                    onClick={() => addToCart(p)}
+                    className="p-1.5 bg-white/5 hover:bg-blue-500/10 border border-white/5 hover:border-blue-500/20 rounded-xl transition-all flex items-center justify-center h-10"
+                    title={p.name}
+                  >
+                    <p className="text-[9px] font-black text-white text-center line-clamp-2 leading-tight uppercase">{p.name}</p>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div className="flex-1 overflow-y-auto p-3 space-y-2 custom-scrollbar">
             {cart.length > 0 && (
               <div className="hidden sm:grid grid-cols-[minmax(0,1fr)_8rem_6rem_2.5rem] items-center gap-3 px-3 text-[9px] font-black uppercase tracking-[0.22em] text-slate-500">
@@ -1389,6 +1570,7 @@ export const BillingPOS: React.FC = () => {
               />
             ))}
             {cart.length === 0 && <div className="h-full flex flex-col items-center justify-center opacity-20"><ShoppingCart size={64} /><p className="font-black uppercase tracking-widest mt-4">Empty Cart</p></div>}
+            <div ref={cartEndRef} />
           </div>
 
           {/* Mobile Floating Checkout Button */}
@@ -1635,30 +1817,43 @@ export const BillingPOS: React.FC = () => {
               </div>
 
               <div className="space-y-2.5">
-                <div className="grid grid-cols-2 gap-2.5">
+                <div className="grid grid-cols-3 gap-2">
                   <div>
-                    <label className="text-[8px] font-black text-slate-500 uppercase tracking-wide block mb-1 px-1 text-center">Grand Discount</label>
+                    <label className="text-[8px] font-black text-slate-500 uppercase tracking-wide block mb-1 px-1 text-center">Discount</label>
                     <div className="relative">
-                      <DollarSign className="absolute left-2.5 top-1/2 -translate-y-1/2 text-orange-500/50" size={13} />
+                      <DollarSign className="absolute left-2 top-1/2 -translate-y-1/2 text-orange-500/50" size={12} />
                       <GlassInput
                         type="number"
                         value={billDiscount}
                         onChange={e => setBillDiscount(e.target.value === '' ? '' : toNum(e.target.value))}
                         placeholder="0.00"
-                        className="w-full h-10 pl-8 px-2 py-2 text-center text-[12px] font-black text-orange-400 rounded-xl"
+                        className="w-full h-10 pl-7 px-1 py-2 text-center text-[12px] font-black text-orange-400 rounded-xl"
                       />
                     </div>
                   </div>
                   <div>
-                    <label className="text-[8px] font-black text-slate-500 uppercase tracking-wide block mb-1 px-1 text-center">Cash Received</label>
+                    <label className="text-[8px] font-black text-slate-500 uppercase tracking-wide block mb-1 px-1 text-center">Cash Paid</label>
                     <div className="relative">
-                      <Banknote className="absolute left-2.5 top-1/2 -translate-y-1/2 text-emerald-500/50" size={13} />
+                      <Banknote className="absolute left-2 top-1/2 -translate-y-1/2 text-emerald-500/50" size={12} />
                       <GlassInput
                         type="number"
                         value={cashReceived}
                         onChange={e => setCashReceived(e.target.value === '' ? '' : toNum(e.target.value))}
                         placeholder="0.00"
-                        className="w-full h-10 pl-8 px-2 py-2 text-center text-[12px] font-black text-emerald-400 rounded-xl"
+                        className="w-full h-10 pl-7 px-1 py-2 text-center text-[12px] font-black text-emerald-400 rounded-xl"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-[8px] font-black text-slate-500 uppercase tracking-wide block mb-1 px-1 text-center">Card Paid</label>
+                    <div className="relative">
+                      <CreditCard className="absolute left-2 top-1/2 -translate-y-1/2 text-blue-500/50" size={12} />
+                      <GlassInput
+                        type="number"
+                        value={cardReceived}
+                        onChange={e => setCardReceived(e.target.value === '' ? '' : toNum(e.target.value))}
+                        placeholder="0.00"
+                        className="w-full h-10 pl-7 px-1 py-2 text-center text-[12px] font-black text-blue-400 rounded-xl"
                       />
                     </div>
                   </div>
@@ -1744,6 +1939,25 @@ export const BillingPOS: React.FC = () => {
                 <button onClick={() => setCart([])} className="py-2 premium-chip tap-lift bg-red-500/5 text-red-500/60 border border-red-500/10 rounded-lg font-black text-[8px] uppercase tracking-[0.14em] hover:bg-red-500/10 transition-all">Reset (F3)</button>
               </div>
 
+              <div className="grid grid-cols-2 gap-2 mt-2">
+                <button
+                  onClick={handleParkBill}
+                  disabled={cart.length === 0}
+                  className="py-2 premium-chip tap-lift bg-purple-500/10 text-purple-400 border border-purple-500/20 rounded-lg font-black text-[8px] uppercase tracking-[0.14em] hover:bg-purple-500/20 transition-all flex items-center justify-center gap-1.5 disabled:opacity-50"
+                >
+                  Hold Bill
+                </button>
+                <button
+                  onClick={() => setShowParkedModal(true)}
+                  className="py-2 premium-chip tap-lift bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded-lg font-black text-[8px] uppercase tracking-[0.14em] hover:bg-blue-500/20 transition-all flex items-center justify-center gap-1.5 relative"
+                >
+                  View Parked
+                  {parkedBills.length > 0 && (
+                    <span className="absolute -top-1 -right-1 w-4 h-4 bg-purple-500 text-white rounded-full flex items-center justify-center text-[8px]">{parkedBills.length}</span>
+                  )}
+                </button>
+              </div>
+
               {posMode === 'RETURN' && selectedBillForReturn && (
                 <button
                   onClick={sendReturnWhatsApp}
@@ -1758,6 +1972,40 @@ export const BillingPOS: React.FC = () => {
           </GlassCard>
         </div>
       </div >
+
+      {/* Parked Bills Modal */}
+      {showParkedModal && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-300">
+          <GlassCard className="w-full max-w-lg p-8 border-white/10 shadow-2xl max-h-[80vh] overflow-y-auto">
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="text-lg font-black uppercase text-white tracking-widest">Parked Bills</h2>
+              <button onClick={() => setShowParkedModal(false)} className="text-gray-500 hover:text-white transition-all"><X size={20} /></button>
+            </div>
+            <div className="space-y-3 max-h-[500px] overflow-y-auto custom-scrollbar">
+              {parkedBills.length > 0 ? (
+                parkedBills.map((pb, i) => (
+                  <div key={pb.id} className="flex items-center justify-between p-4 bg-purple-500/10 border border-purple-500/20 rounded-2xl">
+                    <div>
+                      <p className="font-black text-white uppercase text-sm">{pb.name}</p>
+                      <p className="text-[10px] text-gray-400">{pb.cart.length} items • {pb.customerSearch || 'Walk-in'}</p>
+                    </div>
+                    <button
+                      onClick={() => handleRestoreParked(i)}
+                      className="px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white font-black text-[10px] uppercase tracking-widest rounded-xl transition-all"
+                    >
+                      Restore
+                    </button>
+                  </div>
+                ))
+              ) : (
+                <div className="text-center py-12 text-gray-500">
+                  <p className="text-[10px] font-black uppercase tracking-widest">No Parked Bills</p>
+                </div>
+              )}
+            </div>
+          </GlassCard>
+        </div>
+      )}
 
       {/* Return Items Modal */}
       {
@@ -2088,18 +2336,29 @@ export const BillingPOS: React.FC = () => {
       {
         showManualProduct && (
           <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/95 backdrop-blur-2xl animate-in fade-in duration-300">
-            <GlassCard className="w-full max-w-md p-6 sm:p-8 border-emerald-500/20 rounded-[2rem] sm:rounded-[3rem] animate-in zoom-in-95 max-h-[calc(100vh-2rem)] overflow-y-auto custom-scrollbar" style={{
-              background: 'linear-gradient(135deg, rgba(16, 185, 129, 0.1) 0%, rgba(52, 211, 153, 0.05) 100%)',
+            <GlassCard className="w-full max-w-md p-6 sm:p-8 border-emerald-500/30 rounded-[2rem] sm:rounded-[3rem] animate-in zoom-in-95 max-h-[calc(100vh-2rem)] overflow-y-auto custom-scrollbar shadow-[0_25px_60px_rgba(0,0,0,0.8)]" style={{
+              background: 'linear-gradient(135deg, rgba(16, 185, 129, 0.12) 0%, rgba(52, 211, 153, 0.05) 100%)',
             }}>
-              <div className="flex justify-between items-center mb-8">
-                <h2 className="text-xl font-black text-white uppercase tracking-widest">Add Manual Product</h2>
-                <button onClick={() => { setShowManualProduct(false); setManualProductForm({ name: '', sku: '', costPrice: '', sellPrice: '', quantity: '' }); }} className="p-2 text-gray-500 hover:text-white transition-all"><X size={24} /></button>
+              <div className="flex justify-between items-center mb-6">
+                <div>
+                  <h2 className="text-xl font-black text-white uppercase tracking-widest">Add Manual Product</h2>
+                  <p className="text-[10px] text-emerald-400/80 font-bold uppercase tracking-wider mt-0.5">Quick entry item</p>
+                </div>
+                <button onClick={() => { setShowManualProduct(false); setManualNotice(''); setManualProductForm({ name: '', sku: '', costPrice: '', sellPrice: '', quantity: '1' }); }} className="p-2 text-gray-500 hover:text-white transition-all"><X size={24} /></button>
               </div>
 
-              <form onSubmit={e => { e.preventDefault(); addManualProduct(); }} className="space-y-4">
+              {manualNotice && (
+                <div className="mb-4 p-3 bg-emerald-500/20 border border-emerald-500/40 rounded-xl text-xs font-bold text-emerald-300 flex items-center gap-2 animate-in fade-in duration-200">
+                  <Check size={16} /> {manualNotice}
+                </div>
+              )}
+
+              <form onSubmit={e => { e.preventDefault(); addManualProduct(false); }} className="space-y-4">
                 <div className="space-y-1">
                   <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest ml-1">Product Name *</label>
                   <GlassInput
+                    ref={manualProductNameRef}
+                    autoFocus
                     value={manualProductForm.name}
                     onChange={e => setManualProductForm({ ...manualProductForm, name: e.target.value })}
                     placeholder="e.g. Kitchen Item"
@@ -2170,17 +2429,24 @@ export const BillingPOS: React.FC = () => {
                   </div>
                 )}
 
-                <div className="flex gap-3 pt-4">
+                <div className="flex flex-col sm:flex-row gap-2.5 pt-4">
+                  <button
+                    type="button"
+                    onClick={() => addManualProduct(true)}
+                    className="flex-1 py-3 bg-emerald-600 text-white rounded-2xl font-black uppercase text-xs tracking-wider shadow-lg hover:bg-emerald-500 active:scale-95 transition-all flex items-center justify-center gap-1.5"
+                  >
+                    <PlusCircle size={16} /> Add & Keep Open
+                  </button>
                   <button
                     type="submit"
-                    className="flex-1 py-3 bg-emerald-600 text-white rounded-2xl font-black uppercase text-xs tracking-widest shadow-lg hover:bg-emerald-500 active:scale-95 transition-all flex items-center justify-center gap-2"
+                    className="flex-1 py-3 bg-blue-600 text-white rounded-2xl font-black uppercase text-xs tracking-wider shadow-lg hover:bg-blue-500 active:scale-95 transition-all flex items-center justify-center gap-1.5"
                   >
-                    <Check size={16} /> Add to Cart
+                    <Check size={16} /> Add & Close
                   </button>
                   <button
                     type="button"
-                    onClick={() => { setShowManualProduct(false); setManualProductForm({ name: '', sku: '', costPrice: '', sellPrice: '', quantity: '' }); }}
-                    className="flex-1 py-3 bg-white/5 text-white rounded-2xl font-black uppercase text-xs tracking-widest border border-white/10 hover:bg-white/10 active:scale-95 transition-all"
+                    onClick={() => { setShowManualProduct(false); setManualNotice(''); setManualProductForm({ name: '', sku: '', costPrice: '', sellPrice: '', quantity: '1' }); }}
+                    className="py-3 px-4 bg-white/5 text-slate-300 rounded-2xl font-black uppercase text-xs tracking-wider border border-white/10 hover:bg-white/10 active:scale-95 transition-all"
                   >
                     Cancel
                   </button>

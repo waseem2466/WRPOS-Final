@@ -50,7 +50,7 @@ const DEFAULT_TEMPLATES: Template[] = [
    { id: 't1', name: 'Gentle Reminder', category: 'Recovery', content: "Hi {name}, your balance of LKR {balance} is pending with {business}. Please settle soon. For help, contact {contact}." },
    { id: 't2', name: 'VIP Exclusive', category: 'Promo', content: "Hello {name}, thank you for being a VIP customer of {business}. Show this message in store and enjoy 5% off on your next purchase." },
    { id: 't3', name: 'Stock Update', category: 'Update', content: "Hi {name}, new items have arrived at {business}. Visit us this week to check the latest stock. Contact: {contact}." },
-   { id: 't4', name: 'WhatsApp Group Invite', category: 'Promo', content: "Hi {name}! Welcome to WR Smile & Supplies.\n\nJoin our WhatsApp group for latest products, offers, new arrivals, and quick order updates:\nhttps://chat.whatsapp.com/K7ALigMk9ad4SBlcRUqoxX?mode=wwt\n\nFor orders or help, call/WhatsApp:\n0719336848 / 0779336848\n\nThank you!\nWR Smile & Supplies" }
+   { id: 't4', name: 'WhatsApp Group Invite', category: 'Promo', content: "Hi {name}! Welcome to WR Smile & Supplies.\n\nJoin our WhatsApp group for latest products, offers, new arrivals, and quick order updates:\nhttps://chat.whatsapp.com/G2sFie5DaUHL4XyY2oGEbP\n\nFor orders or help, call/WhatsApp:\n0719336848 / 0779336848\n\nThank you!\nWR Smile & Supplies" }
 ];
 
 export const MarketingHub: React.FC = () => {

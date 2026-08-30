@@ -1,10 +1,122 @@
-import { Bill, BusinessSettings, Customer } from '../types';
+import { Bill, BusinessSettings, Customer, Supplier, SupplierPayment, PurchaseOrder } from '../types';
 import { cleanPhone } from './utils';
 import { errorHandler } from './errorHandler';
 
-const GROUP_LINK = "https://chat.whatsapp.com/K7ALigMk9ad4SBlcRUqoxX?mode=wwt";
+const GROUP_LINK = "https://chat.whatsapp.com/G2sFie5DaUHL4XyY2oGEbP";
 
 export const whatsappService = {
+    getSupplierPrimaryPhone: (supplier: Supplier): string => {
+        return supplier.phone || supplier.hotline || supplier.workerMobile || '';
+    },
+
+    generateSupplierPurchaseOrderMessage: (supplier: Supplier, po: PurchaseOrder, settings?: BusinessSettings | null): string => {
+        const businessName = settings?.businessName || 'WR POS';
+        
+        let itemsSubtotal = 0;
+        const itemsText = (po.items || []).map(i => {
+            const unitCost = i.unitCost || 0;
+            const discountPct = i.discountPercentage || 0;
+            const discountedUnitCost = unitCost * (1 - discountPct / 100);
+            const lineTotal = discountedUnitCost * (i.quantity || 1);
+            itemsSubtotal += lineTotal;
+
+            let itemStr = `- ${i.name} (Qty: ${i.quantity} x LKR ${unitCost.toLocaleString()}`;
+            if (discountPct > 0) {
+                itemStr += ` | Disc: ${discountPct}%`;
+            }
+            itemStr += `) = LKR ${lineTotal.toLocaleString()}`;
+            return itemStr;
+        }).join('\n');
+
+        const poCashDiscount = po.discountAmount || 0;
+        const transportCost = po.transportPaidExternal ? 0 : (po.transportCost || 0);
+        const finalNetTotal = Math.max(0, itemsSubtotal - poCashDiscount + transportCost);
+        const paidAmount = po.paidAmount || 0;
+        const balanceDue = Math.max(0, finalNetTotal - paidAmount);
+
+        let breakdownText = `Subtotal: LKR ${itemsSubtotal.toLocaleString()}\n`;
+        if (poCashDiscount > 0) {
+            breakdownText += `PO Cash Discount: -LKR ${poCashDiscount.toLocaleString()}\n`;
+        }
+        if (po.transportCost && po.transportCost > 0) {
+            breakdownText += `Transport Cost (${po.transportPaidExternal ? 'External' : 'Included'}): +LKR ${po.transportCost.toLocaleString()}\n`;
+        }
+
+        return `*PURCHASE ORDER: #${po.id.slice(-6)}*\n` +
+            `*${businessName}*\n\n` +
+            `Supplier: ${supplier.name}\n` +
+            `Date: ${new Date(po.date).toLocaleDateString()}\n\n` +
+            `*ORDER MANIFEST:*\n${itemsText || '- No items'}\n\n` +
+            `==========================\n` +
+            breakdownText +
+            `*Final Bill Total: LKR ${finalNetTotal.toLocaleString()}*\n` +
+            `Paid Amount: LKR ${paidAmount.toLocaleString()}\n` +
+            (balanceDue > 0 ? `*Balance Due: LKR ${balanceDue.toLocaleString()}*\n` : `*FULLY SETTLED*\n`) +
+            `==========================\n` +
+            `Status: ${po.status}\n\n` +
+            `_Please confirm dispatch and expected delivery._`;
+    },
+
+    generateSupplierPaymentVoucherMessage: (
+        supplier: Supplier,
+        payment: SupplierPayment,
+        po?: PurchaseOrder | null,
+        totalSupplierBalance?: number,
+        settings?: BusinessSettings | null
+    ): string => {
+        const businessName = settings?.businessName || 'WR POS';
+        const methodLabel = payment.paymentMethod === 'CHEQUE' 
+            ? `Cheque (No: ${payment.chequeNumber || 'N/A'}, Date: ${payment.chequeDate || 'N/A'})`
+            : payment.paymentMethod === 'BANK_TRANSFER' ? 'Bank Transfer' : 'Cash';
+
+        let poDetails = '';
+        if (po) {
+            poDetails = `\n*Linked PO:* #${po.id.slice(-6)}\n`;
+            if (po.items && po.items.length > 0) {
+                const itemsList = po.items.map(i => `- ${i.name} (Qty: ${i.quantity})`).join('\n');
+                poDetails += `*PO Items:*\n${itemsList}\n`;
+            }
+        }
+
+        const dateStr = payment.date ? new Date(payment.date).toLocaleDateString() : new Date().toLocaleDateString();
+
+        return `*SUPPLIER PAYMENT VOUCHER: #${payment.id.slice(-6)}*\n` +
+            `*${businessName}*\n\n` +
+            `Supplier: ${supplier.name}\n` +
+            `Date: ${dateStr}\n` +
+            `Payment Method: ${methodLabel}\n` +
+            (payment.note ? `Note: ${payment.note}\n` : '') +
+            poDetails +
+            `\n*Amount Paid: LKR ${payment.amount.toLocaleString()}*\n` +
+            (typeof totalSupplierBalance === 'number' ? `*Remaining Balance Due: LKR ${totalSupplierBalance.toLocaleString()}*\n` : '') +
+            `\n_Thank you for your business & partnership!_`;
+    },
+
+    generateSupplierStatementMessage: (
+        supplier: Supplier,
+        stats: { totalBilled: number; totalPaid: number; balance: number },
+        pendingOrdersCount: number,
+        settings?: BusinessSettings | null
+    ): string => {
+        const businessName = settings?.businessName || 'WR POS';
+        const primaryPhone = supplier.phone || supplier.hotline || supplier.workerMobile || 'N/A';
+
+        return `*SUPPLIER ACCOUNT STATEMENT*\n` +
+            `*${businessName}*\n\n` +
+            `Supplier: ${supplier.name}\n` +
+            `Primary Mobile: ${primaryPhone}\n` +
+            `Date: ${new Date().toLocaleDateString()}\n\n` +
+            `==========================\n` +
+            `*FINANCIAL SUMMARY*\n` +
+            `- Total Procurement Billed: LKR ${stats.totalBilled.toLocaleString()}\n` +
+            `- Total Settlements Paid: LKR ${stats.totalPaid.toLocaleString()}\n` +
+            `- Pending Active Orders: ${pendingOrdersCount}\n` +
+            `==========================\n\n` +
+            (stats.balance > 0 
+                ? `*OUTSTANDING BALANCE DUE: LKR ${stats.balance.toLocaleString()}*\n\n_Please review the ledger summary above._`
+                : `*ACCOUNT STATUS: FULLY SETTLED (NO BALANCE DUE)*\n`) +
+            `\n_Thank you for your ongoing partnership!_`;
+    },
     generateReceiptMessage: (bill: Bill, settings: BusinessSettings, invoiceUrl?: string): string => {
         const businessName = settings.businessName || 'WR Smile & Supplies';
         const supportPhone = settings.contactPhone || '0719336848';
@@ -47,17 +159,40 @@ export const whatsappService = {
             `Date: ${new Date(bill.date).toLocaleDateString()}\n` +
             `Client: ${bill.customerName}\n\n` +
             `*Items*\n${itemsText || '- No items'}\n` +
-            (hiddenItemCount > 0 ? `+ ${hiddenItemCount} more item(s)\n` : '') +
-            `\n*Final Total: LKR ${bill.total.toLocaleString()}*\n` +
+            (bill.discount && bill.discount > 0 ? `Subtotal: LKR ${(bill.subtotal || bill.total + bill.discount).toLocaleString()}\nBill Cash Discount: -LKR ${bill.discount.toLocaleString()}\n` : '') +
+            `*Final Total: LKR ${bill.total.toLocaleString()}*\n` +
             `${paymentLabel}: LKR ${paid.toLocaleString()}\n` +
             (balanceDue > 0.1 ? `*${balanceLabel.toUpperCase()}: LKR ${balanceDue.toLocaleString()}*\n` : `*FULLY PAID*\n`) +
             (balanceDue > 0.1 ? bankDetails : '') +
             (invoiceUrl ? `\n📄 Invoice PDF: ${invoiceUrl}` : '') +
             `\n==========================\n\n` +
             `"Explore, shop, and enjoy quality products at affordable prices. Feel free to reach out for inquiries or orders!"\n` +
-            `Follow this link to join my WhatsApp group: https://chat.whatsapp.com/K7ALigMk9ad4SBlcRUqoxX?mode=wwt\n\n` +
+            `Follow this link to join my WhatsApp group: https://chat.whatsapp.com/G2sFie5DaUHL4XyY2oGEbP\n\n` +
             `*No Cash on delivery*\n` +
             `*Cash deposit only*`;
+    },
+
+    generateReloadReceiptMessage: (
+        mobile: string,
+        amount: number,
+        provider: string,
+        orderId: string,
+        status: string,
+        settings?: BusinessSettings | null
+    ): string => {
+        const businessName = settings?.businessName || 'WR POS';
+        const formattedAmount = amount.toLocaleString('en-LK', { minimumFractionDigits: 2 });
+        return `⚡ *MOBILE RELOAD RECEIPT*\n` +
+            `*${businessName}*\n\n` +
+            `📱 *Mobile No:* ${mobile}\n` +
+            `📶 *Provider:* ${provider}\n` +
+            `💵 *Amount Paid:* LKR ${formattedAmount}\n` +
+            `🆔 *Order ID:* ${orderId}\n` +
+            `Status: ${status === 'SUCCESS' ? '✅ SUCCESSFUL' : '🔄 ' + status}\n` +
+            `📅 *Date:* ${new Date().toLocaleString()}\n\n` +
+            `==========================\n` +
+            `Thank you for using our reload service!\n\n` +
+            `Follow this link to join our WhatsApp group:\n${GROUP_LINK}`;
     },
 
     getTemplateByLanguage: (lang: string) => {
@@ -91,14 +226,47 @@ export const whatsappService = {
         phone: string,
         message: string,
         options?: { invoiceUrl?: string }
-    ): Promise<{ success: boolean, error?: string }> => {
+    ): Promise<{ success: boolean, error?: string, rawMessage?: string }> => {
         const cleanedPhone = cleanPhone(phone);
         if (!cleanedPhone) return { success: false, error: "Invalid phone number" };
 
+        let relayError = '';
+
+        // 1. Try Koyeb Relay FIRST (Primary active WhatsApp server)
+        try {
+            const response = await (window as any).electronAPI?.waRelaySend?.({
+                to: cleanedPhone,
+                message,
+                documentUrl: options?.invoiceUrl,
+                documentName: options?.invoiceUrl ? `${Date.now()}_invoice.pdf` : undefined
+            });
+            if (response?.success) return { success: true };
+            if (response?.error) {
+                relayError = response.error;
+            }
+        } catch (e: unknown) {
+            const err = e instanceof Error ? e : new Error(String(e));
+            relayError = err.message || 'Koyeb Relay sending failed';
+            errorHandler.log('WhatsApp', err, { operation: 'sendDirect', type: 'relay' }, 'medium');
+        }
+
+        // 2. Try Local Baileys QR Bot
+        try {
+            const response = await (window as any).electronAPI?.waQrSend?.({ 
+                to: cleanedPhone, 
+                message,
+                documentUrl: options?.invoiceUrl,
+                documentName: options?.invoiceUrl ? `${Date.now()}_invoice.pdf` : undefined
+            });
+            if (response) return { success: true };
+        } catch (qrError: unknown) {
+            const err = qrError instanceof Error ? qrError : new Error(String(qrError));
+            errorHandler.log('WhatsApp', err, { operation: 'sendDirect', type: 'qr-only' }, 'medium');
+        }
+
+        // 3. Try Meta Cloud API (tertiary fallback)
         const cloudToken = settings?.waAccessToken?.trim();
         const cloudPhoneNumberId = settings?.waPhoneNumberId?.trim();
-        let cloudError = '';
-
         if (cloudToken && cloudPhoneNumberId) {
             try {
                 const response = await (window as any).electronAPI?.waCloudSend?.({
@@ -110,57 +278,26 @@ export const whatsappService = {
                     phoneNumberId: cloudPhoneNumberId
                 });
                 if (response?.success) return { success: true };
-                cloudError = response?.error || 'Cloud sending failed';
             } catch (e: unknown) {
                 const err = e instanceof Error ? e : new Error(String(e));
-                cloudError = err.message || 'Cloud sending failed';
                 errorHandler.log('WhatsApp', err, { operation: 'sendDirect', type: 'cloud' }, 'medium');
             }
         }
 
-        try {
-            const response = await (window as any).electronAPI?.waRelaySend?.({
-                to: cleanedPhone,
-                message,
-                documentUrl: options?.invoiceUrl,
-                documentName: options?.invoiceUrl ? `${Date.now()}_invoice.pdf` : undefined
-            });
-            if (response?.success) return { success: true };
-            if (response?.error && response.error !== 'WhatsApp relay is not configured') {
-                return {
-                    success: false,
-                    error: cloudError ? `Cloud failed: ${cloudError}. Relay failed: ${response.error}` : `Relay failed: ${response.error}`
-                };
-            }
-        } catch (e: unknown) {
-            const err = e instanceof Error ? e : new Error(String(e));
-            errorHandler.log('WhatsApp', err, { operation: 'sendDirect', type: 'relay' }, 'medium');
-            return {
-                success: false,
-                error: cloudError ? `Cloud failed: ${cloudError}. Relay failed: ${err.message}` : `Relay failed: ${err.message}`
-            };
-        }
+        // If all dispatch channels failed
+        const diagnosticError = relayError || 'WhatsApp Koyeb Relay server is not responding. Please check your internet connection.';
 
-        try {
-            const response = await (window as any).electronAPI?.waQrSend?.({ 
-                to: cleanedPhone, 
-                message,
-                documentUrl: options?.invoiceUrl,
-                documentName: options?.invoiceUrl ? `${Date.now()}_invoice.pdf` : undefined
-            });
-            // qrBot.sendMessage returns the message object or null on failure
-            if (!response) {
-                throw new Error('QR sending failed or bot not linked.');
-            }
-            return { success: true };
-        } catch (qrError: unknown) {
-            const err = qrError instanceof Error ? qrError : new Error(String(qrError));
-            errorHandler.log('WhatsApp', err, { operation: 'sendDirect', type: 'qr-only' }, 'medium');
-            return {
-                success: false,
-                error: cloudError ? `Cloud failed: ${cloudError}. QR failed: ${err.message}` : (err.message || "QR sending failed")
-            };
-        }
+        return {
+            success: false,
+            error: diagnosticError,
+            rawMessage: message
+        };
+    },
+
+    openDirectWhatsApp: (phone: string, message: string) => {
+        const cleaned = cleanPhone(phone);
+        const url = `https://api.whatsapp.com/send?phone=${cleaned}&text=${encodeURIComponent(message)}`;
+        window.open(url, '_blank');
     },
 
     verifyConnection: async (settings: BusinessSettings): Promise<boolean> => {
