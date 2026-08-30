@@ -14,8 +14,10 @@ const DEFAULT_AUTH_FOLDER = 'baileys_auth_info';
 const SEND_API_SECRET = process.env.SEND_API_SECRET || '';
 let activeSock = null;
 let latestQR = null;  // Store latest QR for web display
+let skipAuthRestore = false;  // Set true after /reset-auth to prevent re-extracting expired auth
 
 function restoreAuthFromZip() {
+    if (skipAuthRestore) { console.log('[Auth] Skipping zip restore (auth was reset)'); return; }
     if (fs.existsSync(path.join(AUTH_DIR, 'creds.json'))) return;
     if (!fs.existsSync(AUTH_ZIP)) return;
 
@@ -44,7 +46,12 @@ function hasUsableMessageContent(msg) {
         msg.message?.audioMessage ||
         msg.message?.documentMessage ||
         msg.message?.stickerMessage ||
-        msg.message?.videoMessage
+        msg.message?.videoMessage ||
+        msg.message?.orderMessage ||          // WhatsApp Catalog order
+        msg.message?.productMessage ||        // Product shared from catalog
+        msg.message?.interactiveResponseMessage || // Button/list reply
+        msg.message?.listResponseMessage ||   // List selection reply
+        msg.message?.buttonsResponseMessage   // Button reply
     );
 }
 
@@ -216,6 +223,30 @@ const server = http.createServer(async (req, res) => {
         }
     }
 
+    // /reset-auth — clear old auth and force fresh QR
+    if (req.url === '/reset-auth') {
+        try {
+            console.log('[Auth] Resetting auth session for fresh QR...');
+            activeSock = null;
+            latestQR = null;
+            skipAuthRestore = true;  // Prevent restoreAuthFromZip from re-extracting expired auth
+            // Delete auth folder contents
+            if (fs.existsSync(AUTH_DIR)) {
+                const files = fs.readdirSync(AUTH_DIR);
+                for (const f of files) {
+                    try { fs.unlinkSync(path.join(AUTH_DIR, f)); } catch(e) {}
+                }
+                console.log(`[Auth] Cleared ${files.length} auth files from ${AUTH_DIR}`);
+            }
+            // Restart connection to generate fresh QR
+            setTimeout(connectToWhatsApp, 1000);
+            res.writeHead(200, { 'Content-Type': 'text/html' });
+            return res.end('<html><body style="font-family:sans-serif;text-align:center;padding:40px"><h2 style="color:orange">🔄 Auth Reset!</h2><p>Generating fresh QR code...</p><p><a href="/qr">Go to QR page</a> (wait 10 seconds)</p><script>setTimeout(()=>location.href="/qr",10000)</script></body></html>');
+        } catch(e) {
+            return sendJson(res, 500, { error: 'Reset failed: ' + e.message });
+        }
+    }
+
     // /send endpoint for WhatsApp relay
     if (req.method === 'POST' && req.url === '/send') {
         try {
@@ -276,13 +307,44 @@ async function buildInventoryContext(text) {
         for (const word of keywords.slice(0, 5)) {
             const products = await searchInventory(word);
             for (const p of products) {
-                if (!results.has(p.name)) results.set(p.name, p);
+                let target = results.get(p.name);
+                if (!target || p.stock > target.stock) results.set(p.name, p);
             }
         }
         if (results.size === 0) return '';
         return [...results.values()].slice(0, 5)
-            .map(p => `- ${p.name}: Rs. ${p.price} (Stock: ${p.stock})`)
+            .map(p => `- ${p.name}: Rs. ${p.price} (Stock: ${p.stock}${p.stock <= 5 ? ' ⚠️ LOW' : ''}) [${p.category || 'general'}]`)
             .join('\n');
+    } catch { return ''; }
+}
+
+async function buildFinancialContext(customer, phone) {
+    try {
+        let c = customer;
+        let balance = null;
+        if (!c && phone) balance = await getCustomerBalance(phone);
+        const name = c?.name || balance?.name;
+        if (!name) return '';
+        const total = c ? c.totalBalance : balance.totalBalance;
+        const paid = c ? c.paidAmount : balance.paidAmount;
+        const outstanding = c ? c.outstandingBalance : balance.outstandingBalance;
+        // Pull recent invoice history to impress the customer with real POS data
+        let recentOrders = '';
+        try {
+            const p = require('./dbHelper.cjs').getPool ? require('./dbHelper.cjs').getPool() : null;
+            if (p) {
+                const res = await p.query(
+                    `SELECT b.total, b.created_at FROM "Bill" b JOIN "Customer" cu ON b.customer_id = cu.id WHERE cu.phone = $1 ORDER BY b.created_at DESC LIMIT 3`,
+                    [String(phone).replace(/[^0-9]/g, '')]
+                );
+                if (res.rows.length) {
+                    recentOrders = 'Recent invoices:\n' + res.rows.map(r =>
+                        `  - Rs. ${r.total} on ${new Date(r.created_at).toLocaleDateString('en-LK')}`
+                    ).join('\n');
+                }
+            }
+        } catch {}
+        return `Customer: ${name}\nTotal credit: Rs. ${total}\nAlready paid: Rs. ${paid}\nOutstanding balance: Rs. ${outstanding}\n${recentOrders}`;
     } catch { return ''; }
 }
 
@@ -396,34 +458,52 @@ async function startAutoBackup(sock) {
 }
 
 // ═══════════ LOW STOCK ALERTS ═══════════
+const alertedLowStock = new Map(); // productId -> { stock, alertedAt }
 async function startLowStockAlerts(sock) {
-    console.log('[LowStock] Low stock alert scheduler started (every 6h)');
+    console.log('[LowStock] Low stock alert scheduler started (once daily)');
     const LOW_STOCK_THRESHOLD = parseInt(process.env.LOW_STOCK_THRESHOLD || '5');
     const run = async () => {
         try {
             const p = require('./dbHelper.cjs').getPool ? require('./dbHelper.cjs').getPool() : null;
             if (!p) return;
             const res = await p.query(
-                `SELECT name, stock, category, price FROM "Product" WHERE stock <= $1 ORDER BY stock ASC`,
+                `SELECT id, name, stock, category, price FROM "Product" WHERE stock <= $1 ORDER BY stock ASC`,
                 [LOW_STOCK_THRESHOLD]
             );
-            if (res.rows.length === 0) return;
+            // Items back above threshold → clear alert flag (so a re-drop alerts again)
+            const lowIds = new Set(res.rows.map(r => String(r.id)));
+            for (const id of [...alertedLowStock.keys()]) {
+                if (!lowIds.has(id)) alertedLowStock.delete(id);
+            }
+            // Only NEW drops get alerted — never re-announce the same product at the same/lower stock
+            const newAlerts = [];
+            for (const r of res.rows) {
+                const id = String(r.id);
+                const prev = alertedLowStock.get(id);
+                if (!prev || r.stock < prev.stock) {
+                    newAlerts.push(r);
+                    alertedLowStock.set(id, { stock: r.stock, alertedAt: Date.now() });
+                }
+            }
+            if (newAlerts.length === 0) {
+                console.log('[LowStock] No NEW low stock items — no alert sent');
+                return;
+            }
             const ownerJids = ['94719336848@s.whatsapp.net', '94779336848@s.whatsapp.net'];
-            const itemList = res.rows.map((r, i) =>
+            const itemList = newAlerts.map((r, i) =>
                 `${i + 1}. ${r.name} — *${r.stock} left* (Rs. ${r.price}) [${r.category}]`
             ).join('\n');
-            const msg = `⚠️ *LOW STOCK ALERT*\n\n${res.rows.length} product${res.rows.length > 1 ? 's' : ''} running low:\n\n${itemList}\n\n📉 Threshold: ≤${LOW_STOCK_THRESHOLD} units\n⏰ Checked: ${new Date().toLocaleString('en-LK', { timeZone: 'Asia/Colombo' })}`;
+            const msg = `⚠️ *NEW LOW STOCK ALERTS*\n\n${newAlerts.length} product${newAlerts.length > 1 ? 's' : ''} running low:\n\n${itemList}\n\n📉 Threshold: ≤${LOW_STOCK_THRESHOLD} units\n⏰ ${new Date().toLocaleString('en-LK', { timeZone: 'Asia/Colombo' })}`;
             for (const oj of ownerJids) {
                 try { await sendWithTimeout(sock, oj, { text: msg }); } catch(e) {}
             }
-            console.log(`[LowStock] Alert sent: ${res.rows.length} low stock items`);
+            console.log(`[LowStock] ${newAlerts.length} NEW low-stock alerts sent`);
         } catch (e) {
             console.error('[LowStock] Error:', e.message);
         }
     };
-    // Check every 6 hours
-    setInterval(run, 6 * 60 * 60 * 1000);
-    // First check after 5 minutes of startup
+    // Check once daily + first check shortly after startup
+    setInterval(run, 24 * 60 * 60 * 1000);
     setTimeout(run, 5 * 60 * 1000);
 }
 
@@ -501,8 +581,23 @@ async function connectToWhatsApp() {
             const isUnauthorized = statusCode === 401;
             const shouldReconnect = !isUnauthorized && statusCode !== DisconnectReason.loggedOut;
             if (isConflict) console.warn('[WhatsApp] Conflict — another device connected, retrying in 10s...');
-            if (isUnauthorized) console.error('[WhatsApp] Unauthorized (401).');
-            if (shouldReconnect) setTimeout(connectToWhatsApp, isConflict ? 10000 : 3000);
+            if (isUnauthorized) {
+                console.error('[WhatsApp] Unauthorized (401) — clearing old auth for fresh QR...');
+                skipAuthRestore = true;  // Don't restore from auth.bin again
+                try {
+                    if (fs.existsSync(AUTH_DIR)) {
+                        const files = fs.readdirSync(AUTH_DIR);
+                        for (const f of files) {
+                            try { fs.unlinkSync(path.join(AUTH_DIR, f)); } catch(e) {}
+                        }
+                        console.log(`[Auth] Cleared ${files.length} auth files for fresh start`);
+                    }
+                } catch(e) { console.error('[Auth] Clear failed:', e.message); }
+                // Reconnect after a short delay to generate fresh QR
+                setTimeout(connectToWhatsApp, 5000);
+            } else if (shouldReconnect) {
+                setTimeout(connectToWhatsApp, isConflict ? 10000 : 3000);
+            }
         } else if (connection === 'open') {
             console.log(' Connected to WhatsApp successfully!');
             activeSock = sock;
@@ -528,6 +623,72 @@ async function connectToWhatsApp() {
             const isGroup = msg.key.remoteJid?.endsWith('@g.us');
             const senderJid = isGroup ? (msg.key.participant || msg.key.remoteJid) : msg.key.remoteJid;
             const replyTo = msg.key.remoteJid;
+
+            if (!senderJid || senderJid === 'status@broadcast' || replyTo === 'status@broadcast') continue;
+            const orderMsg = msg.message?.orderMessage;
+            if (orderMsg && !isGroup) {
+                knownContacts.add(senderJid);
+                try {
+                    const products = orderMsg.products || [];
+                    const token = orderMsg.token || '';
+                    const currency = orderMsg.currency || 'LKR';
+                    let orderTotal = 0;
+                    let orderLines = products.map(p => {
+                        const price = (p.retailerProductId || '') ? `Rs. ${(p.price / 1000).toFixed(2)}` : 'N/A';
+                        const lineTotal = p.price ? (p.price / 1000) * p.quantity : 0;
+                        orderTotal += lineTotal;
+                        return `• ${p.name} × ${p.quantity} — ${price}`;
+                    }).join('\n');
+
+                    // Try to save as an order in the DB
+                    const customerPhone = extractPhoneFromJid(senderJid);
+                    const customer = await getCustomerByPhone(customerPhone).catch(() => null);
+                    const customerName = customer?.name || `Customer (${customerPhone})`;
+
+                    const confirmMsg = `🛒 *New Catalog Order Received!*\n\n` +
+                        `👤 From: ${customerName}\n` +
+                        `📦 Items:\n${orderLines}\n\n` +
+                        `💰 Est. Total: Rs. ${orderTotal.toFixed(2)}\n\n` +
+                        `✅ Thank you! We'll confirm your order shortly.\n` +
+                        `📞 Questions? Call us anytime.`;
+
+                    await sendWithTimeout(sock, replyTo, { text: confirmMsg }, { quoted: msg });
+
+                    // Notify owner
+                    const ownerJid = '94719336848@s.whatsapp.net';
+                    const ownerAlert = `🛍️ *CATALOG ORDER*\n\n👤 ${customerName} (${customerPhone})\n\n${orderLines}\n\n💰 Total: Rs. ${orderTotal.toFixed(2)}`;
+                    await sendWithTimeout(sock, ownerJid, { text: ownerAlert }).catch(() => {});
+
+                    console.log(`[Catalog] Order from ${customerPhone}: ${products.length} items, Rs. ${orderTotal.toFixed(2)}`);
+                } catch(e) {
+                    console.error('[Catalog] Order error:', e.message);
+                    await sendWithTimeout(sock, replyTo, { text: '✅ Order received! We will contact you soon.' }, { quoted: msg });
+                }
+                continue;
+            }
+
+            // ── WhatsApp Product SHARE handler ──────────────────────────────
+            const productMsg = msg.message?.productMessage;
+            if (productMsg && !isGroup) {
+                knownContacts.add(senderJid);
+                const product = productMsg.product;
+                const pName = product?.title || product?.name || 'this product';
+                const pPrice = product?.priceAmount1000 ? `Rs. ${(product.priceAmount1000 / 1000).toFixed(2)}` : '';
+                const reply = `🏷️ *${pName}*${pPrice ? `\n💰 Price: ${pPrice}` : ''}\n\nInterested? Reply *yes* to order or ask us anything!`;
+                await sendWithTimeout(sock, replyTo, { text: reply }, { quoted: msg });
+                console.log(`[Catalog] Product share: ${pName}`);
+                continue;
+            }
+
+            // ── Button / List REPLY handler ──────────────────────────────────
+            const listReply = msg.message?.listResponseMessage;
+            const btnReply = msg.message?.buttonsResponseMessage;
+            const interactiveReply = msg.message?.interactiveResponseMessage;
+            if (listReply || btnReply || interactiveReply) {
+                const selectedTitle = listReply?.title || btnReply?.selectedDisplayText || interactiveReply?.nativeFlowResponseMessage?.paramsJson || '';
+                if (selectedTitle) text = selectedTitle;
+            }
+            // ─────────────────────────────────────────────────────────────────
 
             if (!text) {
                 if (msg.message?.audioMessage && !isGroup) {
@@ -566,10 +727,6 @@ async function connectToWhatsApp() {
                     continue;
                 }
             }
-
-            if (senderJid === 'status@broadcast' || replyTo === 'status@broadcast') continue;
-
-            if (senderJid === 'status@broadcast' || replyTo === 'status@broadcast') continue;
 
             console.log(`[Message] from ${senderJid}: "${text}"`);
 
@@ -1079,16 +1236,10 @@ async function connectToWhatsApp() {
                 continue;
             }
             // ═══════════ END JOIN GROUP ═══════════
+            // 4b. Live customer financial status (with recent POS invoices)
             let financialContext = '';
             if (intent === 'LOAN_INQUIRY' || intent === 'BALANCE_CHECK') {
-                if (customer) {
-                    financialContext = `Customer: ${customer.name}\nTotal: Rs. ${customer.totalBalance}\nPaid: Rs. ${customer.paidAmount}\nOutstanding: Rs. ${customer.outstandingBalance}`;
-                } else if (phone) {
-                    const balance = await getCustomerBalance(phone);
-                    if (balance) {
-                        financialContext = `Customer: ${balance.name}\nTotal: Rs. ${balance.totalBalance}\nPaid: Rs. ${balance.paidAmount}\nOutstanding: Rs. ${balance.outstandingBalance}`;
-                    }
-                }
+                financialContext = await buildFinancialContext(customer, phone);
             }
 
             // 5. Build live inventory context
