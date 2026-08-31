@@ -38,6 +38,48 @@ function restoreAuthFromZip() {
     console.log(` Auth session restored at ${AUTH_DIR}!`);
 }
 
+// ═══════════ WhatsApp Session Persistence (survives Koyeb restarts) ═══════════
+let lastCredsSave = 0;
+const CREDS_SAVE_INTERVAL = 30000; // Debounce: max once per 30s
+
+async function saveCredsToDB(credsJson) {
+    try {
+        const { getPool } = require('./dbHelper.cjs');
+        const pool = getPool();
+        await pool.query(
+            `INSERT INTO "WhatsAppSession" (id, creds_json, updated_at)
+             VALUES ('active_session', $1, NOW())
+             ON CONFLICT (id) DO UPDATE SET creds_json = $1, updated_at = NOW()`,
+            [JSON.stringify(credsJson)]
+        );
+        console.log('[Auth] WhatsApp session saved to Neon DB');
+    } catch (e) {
+        console.error('[Auth] Failed to save session to DB:', e.message);
+    }
+}
+
+async function restoreCredsFromDB() {
+    try {
+        const { getPool } = require('./dbHelper.cjs');
+        const pool = getPool();
+        const res = await pool.query(
+            `SELECT creds_json FROM "WhatsAppSession" WHERE id = 'active_session'`
+        );
+        if (res.rows.length > 0 && res.rows[0].creds_json) {
+            fs.mkdirSync(AUTH_DIR, { recursive: true });
+            fs.writeFileSync(
+                path.join(AUTH_DIR, 'creds.json'),
+                JSON.stringify(res.rows[0].creds_json, null, 2)
+            );
+            console.log('[Auth] WhatsApp session restored from Neon DB!');
+            return true;
+        }
+    } catch (e) {
+        console.error('[Auth] Failed to restore session from DB:', e.message);
+    }
+    return false;
+}
+
 function hasUsableMessageContent(msg) {
     return !!(
         msg.message?.conversation ||
@@ -139,6 +181,16 @@ async function migrateSupplierTables() {
             )
         `);
         console.log('[DB] Supplier, StockReceive & InvitedPhone tables ready');
+
+        // WhatsAppSession — persist WhatsApp auth across container restarts
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS "WhatsAppSession" (
+                id TEXT PRIMARY KEY DEFAULT 'active_session',
+                creds_json JSONB NOT NULL,
+                updated_at TIMESTAMP DEFAULT NOW()
+            )
+        `);
+        console.log('[DB] WhatsAppSession table ready');
     } catch (e) {
         console.error('[DB] Migration error:', e.message);
     }
@@ -550,6 +602,13 @@ async function connectToWhatsApp() {
     console.log('Starting WR POS Cloud WhatsApp Bot...');
     console.log(`[WhatsApp] Auth directory: ${AUTH_DIR}`);
 
+    // Priority 1: DB persistence (survives Koyeb restarts)
+    if (!fs.existsSync(path.join(AUTH_DIR, 'creds.json'))) {
+        console.log('[Auth] No local creds.json — trying Neon DB restore...');
+        await restoreCredsFromDB();
+    }
+
+    // Priority 2: Fallback to auth.bin zip
     restoreAuthFromZip();
 
     const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
@@ -564,9 +623,25 @@ async function connectToWhatsApp() {
         markOnlineOnConnect: true
     });
 
-    sock.ev.on('creds.update', saveCreds);
+    // Debounced cred save — local file + Neon DB
+    sock.ev.on('creds.update', async (creds) => {
+        saveCreds();
+        const now = Date.now();
+        if (now - lastCredsSave > CREDS_SAVE_INTERVAL) {
+            lastCredsSave = now;
+            try {
+                const credsPath = path.join(AUTH_DIR, 'creds.json');
+                if (fs.existsSync(credsPath)) {
+                    const credsJson = JSON.parse(fs.readFileSync(credsPath, 'utf8'));
+                    await saveCredsToDB(credsJson);
+                }
+            } catch (e) {
+                console.error('[Auth] Debounced DB save error:', e.message);
+            }
+        }
+    });
 
-    sock.ev.on('connection.update', (update) => {
+    sock.ev.on('connection.update', async (update) => {
         const { connection, lastDisconnect, qr } = update;
         if (qr) {
             latestQR = qr;  // Store for /qr web endpoint
@@ -584,6 +659,12 @@ async function connectToWhatsApp() {
             if (isUnauthorized) {
                 console.error('[WhatsApp] Unauthorized (401) — clearing old auth for fresh QR...');
                 skipAuthRestore = true;  // Don't restore from auth.bin again
+                // Clear stale session from DB too
+                try {
+                    const { getPool } = require('./dbHelper.cjs');
+                    await getPool().query(`DELETE FROM "WhatsAppSession" WHERE id = 'active_session'`);
+                    console.log('[Auth] Cleared session from Neon DB');
+                } catch(e) {}
                 try {
                     if (fs.existsSync(AUTH_DIR)) {
                         const files = fs.readdirSync(AUTH_DIR);
